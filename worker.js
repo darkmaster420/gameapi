@@ -566,7 +566,7 @@ function isValidImageUrl(url) {
 }
 
 async function extractDownloadLinks(postUrl, siteType = 'skidrow') {
-  if (!postUrl || siteType === 'freegog') return [];
+  if (!postUrl) return [];
   try {
     const response = await fetch(postUrl, {
       headers: {
