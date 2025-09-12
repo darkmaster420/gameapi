@@ -46,7 +46,7 @@ const CACHE_CONFIG = {
 };
 
 // Maximum posts to fetch per site to prevent timeouts
-const MAX_POSTS_PER_SITE = 100;
+const MAX_POSTS_PER_SITE = 10;
 
 async function handleClearCache(corsHeaders) {
   const cache = caches.default;
@@ -309,7 +309,7 @@ async function fetchAllSearchResults(searchQuery, siteParam) {
   validPosts.sort((a, b) => {
     const dateA = new Date(a.date);
     const dateB = new Date(b.date);
-    
+
     if (isNaN(dateA.getTime())) {
       return 1;
     }
@@ -366,22 +366,12 @@ async function fetchRecentUploadsFromSite(site) {
 
 async function fetchPostsWithSearch(site, searchQuery) {
   try {
-    // Corrected logic to handle per_page for specific sites
-    let params;
-    if (site.type === 'freegog') {
-      params = new URLSearchParams({
-        search: searchQuery,
-        orderby: 'date',
-        order: 'desc'
-      });
-    } else {
-      params = new URLSearchParams({
-        search: searchQuery,
-        per_page: MAX_POSTS_PER_SITE.toString(),
-        orderby: 'date',
-        order: 'desc'
-      });
-    }
+    const params = new URLSearchParams({
+      search: searchQuery,
+      per_page: MAX_POSTS_PER_SITE.toString(),
+      orderby: 'date',
+      order: 'desc'
+    });
 
     const url = `${site.baseUrl}?${params}`;
     const response = await fetch(url, {
@@ -566,66 +556,139 @@ function isValidImageUrl(url) {
 }
 
 async function extractDownloadLinks(postUrl, siteType = 'skidrow') {
-  if (!postUrl) return [];
   try {
     const response = await fetch(postUrl, {
       headers: {
-        'User-Agent': 'Cloudflare-Workers-Link-Extractor/1.0'
+        'User-Agent': 'Cloudflare-Workers-Link-Extractor/2.0'
       }
     });
+
     if (!response.ok) {
-      console.error(`Failed to fetch post content for links: ${response.status}`);
+      console.warn(`Failed to fetch post content from ${postUrl}`);
       return [];
     }
+
     const html = await response.text();
-    const links = [];
-    
-    let currentLinkText = '';
-    const rewriter = new HTMLRewriter()
-      .on('a[href]', {
-        element(element) {
-          const href = element.getAttribute('href');
-          if (href && isValidDownloadUrl(href)) {
-            const service = extractServiceName(href);
-            element.onEndTag(endTag => {
-                if (currentLinkText) {
-                    links.push({ url: href, text: currentLinkText.trim(), service });
-                    currentLinkText = '';
-                }
-            });
-          }
-        },
-        text(text) {
-          if (text.text.trim().length > 0) {
-            currentLinkText += text.text;
+    const downloadLinks = [];
+
+    if (siteType === 'skidrow') {
+      // Handle codecolorer blocks with filenames
+      const codeColorerRegex = /<div class="codecolorer-container[^>]*>[\s\S]*?<div class="text codecolorer">(.*?)<\/div>[\s\S]*?<\/div>/gi;
+      let codeMatch;
+      while ((codeMatch = codeColorerRegex.exec(html)) !== null) {
+        const filename = codeMatch[1].trim();
+        if (filename && !filename.includes('Uploading') && filename.length > 3) {
+          const beforeCode = html.substring(0, codeMatch.index);
+          const linkMatch = beforeCode.match(/<a[^>]+href=["'](.*?)["'][^>]*>[\s\S]*?$/);
+          if (linkMatch && linkMatch[1]) {
+            const url = linkMatch[1];
+            const service = extractServiceName(url);
+            if (!downloadLinks.some(link => link.url === url)) {
+              downloadLinks.push({
+                type: 'hosting',
+                service,
+                url,
+                filename,
+                text: `${service} - ${filename}`
+              });
+            }
           }
         }
-      });
+      }
+    } else if (siteType === 'freegog') {
+      // FreeGOG patterns
+      const downloadRegex = /<a[^>]*href=["'](https?:\/\/[^"']*(?:mediafire|mega|1fichier|rapidgator|uploaded|turbobit|nitroflare|katfile|pixeldrain|gofile|mixdrop|krakenfiles|filefactory|dailyuploads|multiup|drive\.google|dropbox|onedrive|torrents?)[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
+      let m;
+      while ((m = downloadRegex.exec(html)) !== null) {
+        const url = m[1];
+        const linkText = stripHtml(m[2]).trim();
+        const service = extractServiceName(url);
+        if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
+          downloadLinks.push({ type: 'hosting', service, url, text: linkText || service });
+        }
+      }
+
+      const fileRegex = /<a[^>]*href=["'](https?:\/\/[^"']*\.(?:exe|zip|rar|7z|iso|bin|cue|mdf|mds)[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
+      while ((m = fileRegex.exec(html)) !== null) {
+        const url = m[1];
+        const linkText = stripHtml(m[2]).trim();
+        if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
+          downloadLinks.push({ type: 'direct', service: 'Direct Download', url, text: linkText || 'Direct Download' });
+        }
+      }
+
+      const torrentRegex = /<a[^>]*href=["'](magnet:[^"']*?)["'][^>]*>([^<]*)<\/a>|<a[^>]*href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
+      while ((m = torrentRegex.exec(html)) !== null) {
+        const url = m[1] || m[3];
+        const linkText = stripHtml(m[2] || m[4]).trim();
+        if (url && !downloadLinks.some(l => l.url === url)) {
+          downloadLinks.push({ type: 'torrent', service: url.startsWith('magnet:') ? 'Magnet' : 'Torrent', url, text: linkText || (url.startsWith('magnet:') ? 'Magnet Link' : 'Torrent File') });
+        }
+      }
       
-    await rewriter.transform(new Response(html)).text();
-    
-    return links;
-  } catch (error) {
-    console.error(`Error extracting download links from ${postUrl}:`, error);
+      const freegogBtnRegex = /<a[^>]+class=["'][^"']*download-btn[^"']*["'][^>]+href=["'](https?:\/\/gdl\.freegogpcgames\.xyz\/[^"']+)["'][^>]*>([^<]+)<\/a>/gi;
+      let fb;
+      while ((fb = freegogBtnRegex.exec(html)) !== null) {
+        const url = fb[1];
+        const linkText = stripHtml(fb[2]).trim();
+        if (!downloadLinks.some(l => l.url === url)) {
+          downloadLinks.push({
+            type: 'direct',
+            service: 'FreeGOG',
+            url,
+            text: linkText || 'FreeGOG Download'
+          });
+        }
+      }
+
+      const buttonRegex = /<(?:a|button)[^>]*(?:class|id)=["'][^"']*(?:download|btn|button)[^"']*["'][^>]*href=["'](https?:\/\/[^"']+)["'][^>]*>([^<]*)<\/(?:a|button)>/gi;
+      while ((m = buttonRegex.exec(html)) !== null) {
+        const url = m[1];
+        const linkText = stripHtml(m[2]).trim();
+        const service = extractServiceName(url);
+        if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
+          downloadLinks.push({ type: 'hosting', service, url, text: linkText || service });
+        }
+      }
+    }
+
+    // Generic hosting/torrent patterns for both sites
+    const hostingServices = [
+      'mediafire.com','mega.nz','mega.co.nz','1fichier.com','rapidgator.net',
+      'uploaded.net','turbobit.net','nitroflare.com','katfile.com',
+      'pixeldrain.com','gofile.io','mixdrop.to','krakenfiles.com',
+      'filefactory.com','dailyuploads.net','multiup.io','zippyshare.com',
+      'drive.google.com','dropbox.com','onedrive.live.com'
+    ];
+    const hostingRegex = new RegExp(`<a[^>]+href=["'](https?://[^"']*(?:${hostingServices.join('|')})[^"']*?)["'][^>]*>`, 'gi');
+    let hm;
+    while ((hm = hostingRegex.exec(html)) !== null) {
+      const url = hm[1];
+      const service = extractServiceName(url);
+      if (!downloadLinks.some(l => l.url === url)) {
+        downloadLinks.push({ type: 'hosting', service, url, text: service });
+      }
+    }
+
+    const torrentRegex = /<a[^>]+href=["'](magnet:[^"']*?)["'][^>]*>|<a[^>]+href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>/gi;
+    let tm;
+    while ((tm = torrentRegex.exec(html)) !== null) {
+      const url = tm[1] || tm[2];
+      if (url && !downloadLinks.some(l => l.url === url)) {
+        downloadLinks.push({ type: 'torrent', url, text: url.startsWith('magnet:') ? 'Magnet Link' : 'Torrent File' });
+      }
+    }
+
+    const maxLinks = siteType === 'freegog' ? 20 : 15;
+    return downloadLinks.slice(0, maxLinks);
+
+  } catch (err) {
+    console.error(`Error extracting download links from ${postUrl}:`, err);
     return [];
   }
 }
 
 function isValidDownloadUrl(url) {
-  const invalidPatterns = [
-    /skidrowreloaded.com/,
-    /freegogpcgames.com/,
-    /youtube\.com/,
-    /twitter\.com/,
-    /facebook\.com/,
-    /pinterest\.com/,
-    /instagram\.com/
-  ];
-
-  return !invalidPatterns.some(pattern => pattern.test(url));
-}
-
-function extractServiceName(url) {
   const hostingServices = {
     'mediafire.com': 'MediaFire',
     'mega.nz': 'MEGA',
@@ -649,21 +712,47 @@ function extractServiceName(url) {
     'onedrive.live.com': 'OneDrive'
   };
 
-  for (const [domain, name] of Object.entries(hostingServices)) {
-    if (url.includes(domain)) {
-      return name;
-    }
-  }
-
   try {
     const hostname = new URL(url).hostname;
-    const parts = hostname.split('.');
-    if (parts.length >= 2) {
-      return parts[parts.length - 2];
+    // ✅ Convert object keys to array and check
+    return Object.keys(hostingServices).some(domain => hostname.includes(domain));
+  } catch (e) {
+    return false;
+  }
+}
+
+function extractServiceName(url) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+
+    if (host.includes('freegogpcgames.com') || host.includes('gdl.freegogpcgames.xyz')) {
+      return 'FreeGOG';
     }
-    return 'Unknown Service';
+    if (host.includes('mediafire')) return 'Mediafire';
+    if (host.includes('mega')) return 'Mega';
+    if (host.includes('1fichier')) return '1Fichier';
+    if (host.includes('rapidgator')) return 'Rapidgator';
+    if (host.includes('uploaded')) return 'Uploaded';
+    if (host.includes('turbobit')) return 'Turbobit';
+    if (host.includes('nitroflare')) return 'Nitroflare';
+    if (host.includes('katfile')) return 'Katfile';
+    if (host.includes('pixeldrain')) return 'Pixeldrain';
+    if (host.includes('gofile')) return 'Gofile';
+    if (host.includes('mixdrop')) return 'Mixdrop';
+    if (host.includes('krakenfiles')) return 'Krakenfiles';
+    if (host.includes('filefactory')) return 'FileFactory';
+    if (host.includes('dailyuploads')) return 'DailyUploads';
+    if (host.includes('multiup')) return 'MultiUp';
+    if (host.includes('zippyshare')) return 'Zippyshare';
+    if (host.includes('drive.google')) return 'Google Drive';
+    if (host.includes('dropbox')) return 'Dropbox';
+    if (host.includes('onedrive')) return 'OneDrive';
+    if (host.includes('torrent')) return 'Torrent';
+
+    return host;
   } catch {
-    return 'Unknown Service';
+    return 'Unknown';
   }
 }
 
