@@ -13,7 +13,8 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
-    if (request.method !== 'GET') {
+    // NEW: Allow both GET and POST for all endpoints
+    if (request.method !== 'GET' && request.method !== 'POST') {
       return new Response('Method not allowed', { status: 405, headers: corsHeaders });
     }
 
@@ -31,6 +32,19 @@ export default {
     if (url.pathname === '/recent') {
       return await handleRecentUploadsComplete(request, corsHeaders, ctx);
     }
+    
+    // Handles decryption endpoint
+    if (url.pathname === '/decrypt') {
+      const hash = url.searchParams.get('hash');
+      if (!hash) {
+        return new Response(JSON.stringify({ success: false, error: 'Missing hash' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          
+        });
+      }
+      return await handleDecrypt(hash, corsHeaders, env, ctx);
+    }
 
     // Handle search endpoint
     return await handleSearchComplete(request, corsHeaders, ctx);
@@ -47,6 +61,64 @@ const CACHE_CONFIG = {
 
 // Maximum posts to fetch per site to prevent timeouts
 const MAX_POSTS_PER_SITE = 10;
+
+// Helper functions for common tasks
+function stripHtml(html) {
+  return (html || '').replace(/<[^>]*>?/gm, '');
+}
+
+function extractServiceName(url) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    
+    if (host.includes('gamedrive.org')) return 'GameDrive';
+    if (host.includes('torrent.cybar.xyz')) return 'CybarTorrent';
+    if (host.includes('freegogpcgames.com') || host.includes('gdl.freegogpcgames.xyz')) {
+      return 'FreeGOG';
+    }
+    if (host.includes('mediafire')) return 'Mediafire';
+    if (host.includes('mega')) return 'MEGA';
+    if (host.includes('1fichier')) return '1Fichier';
+    if (host.includes('rapidgator')) return 'Rapidgator';
+    if (host.includes('uploaded')) return 'Uploaded';
+    if (host.includes('turbobit')) return 'Turbobit';
+    if (host.includes('nitroflare')) return 'Nitroflare';
+    if (host.includes('katfile')) return 'Katfile';
+    if (host.includes('pixeldrain')) return 'Pixeldrain';
+    if (host.includes('gofile')) return 'Gofile';
+    if (host.includes('mixdrop')) return 'Mixdrop';
+    if (host.includes('krakenfiles')) return 'Krakenfiles';
+    if (host.includes('filefactory')) return 'FileFactory';
+    if (host.includes('dailyuploads')) return 'DailyUploads';
+    if (host.includes('multiup')) return 'MultiUp';
+    if (host.includes('zippyshare')) return 'Zippyshare';
+    if (host.includes('drive.google')) return 'Google Drive';
+    if (host.includes('dropbox')) return 'Dropbox';
+    if (host.includes('onedrive')) return 'OneDrive';
+    if (host.includes('torrent')) return 'Torrent';
+
+    return host;
+  } catch {
+    return 'Unknown';
+  }
+}
+
+function extractDescription(content) {
+  if (!content) return '';
+  const divRegex = /<div[^>]*class="entry-content"[^>]*>([\s\S]*?)<\/div>/i;
+  const match = content.match(divRegex);
+  if (match && match[1]) {
+    const contentWithoutDiv = match[1];
+    const imageAndLinkRegex = /<img[^>]*>|<a[^>]*>(.*?)<\/a>|Download Links|Password|Title:|Genre:|Developer:|Publisher:|Release Name:|Game Version:|Size:|Interface Language:|Audio Language:|Subtitles Language:|Crack:|Minimun:|Operating system:|CPU:|RAM:|Hard disk:|Video card:|Installation:|Game Features:|Repack Features:|Description:|Screenshots:/gi;
+    const strippedContent = contentWithoutDiv.replace(imageAndLinkRegex, (match) => {
+      const linkTextMatch = /<a[^>]*>(.*?)<\/a>/i.exec(match);
+      return linkTextMatch ? linkTextMatch[1] : '';
+    });
+    return stripHtml(strippedContent).trim().split('\n').filter(line => line.trim() !== '').join('\n');
+  }
+  return stripHtml(content).trim();
+}
 
 async function handleClearCache(corsHeaders) {
   const cache = caches.default;
@@ -159,7 +231,7 @@ async function handleRecentUploadsComplete(request, corsHeaders, ctx) {
 async function handleSearchComplete(request, corsHeaders, ctx) {
   const url = new URL(request.url);
   const searchQuery = url.searchParams.get('search');
-  const siteParam = url.searchParams.get('site') || 'both';
+  const siteParam = url.searchParams.get('site') || 'all';
 
   if (!searchQuery?.trim()) {
     return new Response(JSON.stringify({ error: 'Search query required' }), {
@@ -228,6 +300,11 @@ async function fetchAllRecentUploads() {
       baseUrl: 'https://freegogpcgames.com/wp-json/wp/v2/posts',
       type: 'freegog',
       name: 'FreeGOGPCGames'
+    },
+    {
+      baseUrl: 'https://gamedrive.org/wp-json/wp/v2/posts',
+      type: 'gamedrive',
+      name: 'GameDrive'
     }
   ];
 
@@ -277,7 +354,15 @@ async function fetchAllRecentUploads() {
 
 async function fetchAllSearchResults(searchQuery, siteParam) {
   const sites = [];
-  if (siteParam === 'both' || siteParam === 'all' || !siteParam) {
+  
+  if (siteParam === 'all' || !siteParam) {
+    sites.push(
+      { baseUrl: 'https://www.skidrowreloaded.com/wp-json/wp/v2/posts', type: 'skidrow', name: 'SkidrowReloaded' },
+      { baseUrl: 'https://freegogpcgames.com/wp-json/wp/v2/posts', type: 'freegog', name: 'FreeGOGPCGames' },
+      { baseUrl: 'https://gamedrive.org/wp-json/wp/v2/posts', type: 'gamedrive', name: 'GameDrive' }
+    );
+  } else if (siteParam === 'both') {
+    // Legacy support - now searches first two sites
     sites.push(
       { baseUrl: 'https://www.skidrowreloaded.com/wp-json/wp/v2/posts', type: 'skidrow', name: 'SkidrowReloaded' },
       { baseUrl: 'https://freegogpcgames.com/wp-json/wp/v2/posts', type: 'freegog', name: 'FreeGOGPCGames' }
@@ -286,6 +371,8 @@ async function fetchAllSearchResults(searchQuery, siteParam) {
     sites.push({ baseUrl: 'https://www.skidrowreloaded.com/wp-json/wp/v2/posts', type: 'skidrow', name: 'SkidrowReloaded' });
   } else if (siteParam === 'freegog') {
     sites.push({ baseUrl: 'https://freegogpcgames.com/wp-json/wp/v2/posts', type: 'freegog', name: 'FreeGOGPCGames' });
+  } else if (siteParam === 'gamedrive') {
+    sites.push({ baseUrl: 'https://gamedrive.org/wp-json/wp/v2/posts', type: 'gamedrive', name: 'GameDrive' });
   }
 
   const sitePromises = sites.map(site => fetchPostsWithSearch(site, searchQuery));
@@ -341,6 +428,11 @@ async function fetchRecentUploadsFromSite(site) {
       order: 'desc'
     });
 
+    // For GameDrive, only include Scene Release category (id = 3)
+    if (site.type === 'gamedrive') {
+      params.set('categories', '3');
+    }
+
     const url = `${site.baseUrl}?${params}`;
     const response = await fetch(url, {
       headers: {
@@ -373,6 +465,11 @@ async function fetchPostsWithSearch(site, searchQuery) {
       order: 'desc'
     });
 
+    // Filter search results to Scene Release on GameDrive
+    if (site.type === 'gamedrive') {
+      params.set('categories', '3');
+    }
+
     const url = `${site.baseUrl}?${params}`;
     const response = await fetch(url, {
       headers: {
@@ -386,8 +483,6 @@ async function fetchPostsWithSearch(site, searchQuery) {
 
     // The API's search is reliable, so we directly use its results.
     const posts = await response.json();
-    
-    // The problematic, redundant filtering block has been removed from here.
     
     const transformedPosts = await Promise.all(
       posts.map(async (post) => transformPost(post, site, true))
@@ -555,6 +650,172 @@ function isValidImageUrl(url) {
   return !invalidPatterns.some(pattern => pattern.test(url));
 }
 
+
+function isValidDownloadUrl(url) {
+  const hostingServices = {
+    'mediafire.com': 'MediaFire',
+    'mega.nz': 'MEGA',
+    'mega.co.nz': 'MEGA',
+    '1fichier.com': '1Fichier',
+    'rapidgator.net': 'RapidGator',
+    'uploaded.net': 'Uploaded',
+    'turbobit.net': 'TurboBit',
+    'nitroflare.com': 'NitroFlare',
+    'katfile.com': 'KatFile',
+    'pixeldrain.com': 'PixelDrain',
+    'gofile.io': 'GoFile',
+    'mixdrop.to': 'MixDrop',
+    'krakenfiles.com': 'KrakenFiles',
+    'filefactory.com': 'FileFactory',
+    'dailyuploads.net': 'DailyUploads',
+    'multiup.io': 'MultiUp',
+    'zippyshare.com': 'ZippyShare',
+    'drive.google.com': 'Google Drive',
+    'dropbox.com': 'Dropbox',
+    'onedrive.live.com': 'OneDrive',
+    'gamedrive.org': 'GameDrive',
+    'torrent.cybar.xyz': 'CybarTorrent'
+  };
+
+  try {
+    const hostname = new URL(url).hostname;
+    return Object.keys(hostingServices).some(domain => hostname.includes(domain));
+  } catch (e) {
+    return false;
+  }
+}
+
+/* ---------------------------
+   Corrected Decryption Handler
+   --------------------------- */
+async function handleDecrypt(hash, corsHeaders, env, ctx) {
+  const cacheKey = `decrypt:${hash}`;
+  const cache = caches.default;
+  const cacheRequest = new Request(`https://cache.internal/${cacheKey}`);
+
+  // Check cache first
+  const cachedResponse = await cache.match(cacheRequest);
+  if (cachedResponse) {
+    const data = await cachedResponse.json();
+    return new Response(JSON.stringify({ ...data, cached: true }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json', 'X-Cache-Status': 'HIT' }
+    });
+  }
+
+  try {
+    // Make the POST request to your VPS proxy
+    const response = await fetch(`https://decrypt.iforgor.cc/decrypt`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ hash })
+    });
+
+    // Handle non-200 responses from your proxy
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      return new Response(JSON.stringify({ success: false, error: 'Failed to decrypt link from proxy', details: errorData }), {
+        status: response.status,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    const data = await response.json();
+    console.log('Response from Node.js server:', data);
+
+    // Handle the response from your Node.js server
+    if (data.success === false) {
+      // If the Node.js server returned an error, pass it through
+      return new Response(JSON.stringify(data), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Check if we have a successful response with URL data
+    // The upstream API might return the URL directly or in various formats
+    let resolvedUrl = null;
+    
+    if (data.url) {
+      // If the response has a url property
+      resolvedUrl = data.url;
+    } else if (data.success && data.decryptedContent) {
+      // If the response has decryptedContent
+      resolvedUrl = data.decryptedContent;
+    } else if (typeof data === 'string' && data.startsWith('http')) {
+      // If the response is just a URL string
+      resolvedUrl = data;
+    } else if (data.result && typeof data.result === 'string' && data.result.startsWith('http')) {
+      // If the response has result property with URL
+      resolvedUrl = data.result;
+    } else {
+      // Log the actual response to help debug
+      console.log('Unexpected response format:', JSON.stringify(data));
+      
+      // Return the raw response for debugging
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: 'Unexpected response format from decryption service',
+        rawResponse: data 
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (resolvedUrl && resolvedUrl.startsWith('http')) {
+      const hosterName = extractServiceName(resolvedUrl);
+      const resolvedData = {
+        success: true,
+        originalHash: hash,
+        resolvedUrl: resolvedUrl,
+        service: hosterName
+      };
+
+      // Cache the successful result
+      const cacheResponse = new Response(JSON.stringify(resolvedData), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=3600'
+        }
+      });
+      ctx.waitUntil(cache.put(cacheRequest, cacheResponse.clone()));
+
+      return new Response(JSON.stringify(resolvedData), {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+          'X-Cache-Status': 'MISS'
+        }
+      });
+    } else {
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: 'No valid URL found in decryption response',
+        rawResponse: data 
+      }), {
+        status: 404,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+  } catch (err) {
+    console.error('handleDecrypt error:', err);
+    return new Response(JSON.stringify({ 
+      success: false, 
+      error: 'Server error during decryption',
+      details: err.message 
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+}
+
+/* ---------------------------
+   Main download link extractor
+   --------------------------- */
+
 async function extractDownloadLinks(postUrl, siteType = 'skidrow') {
   try {
     const response = await fetch(postUrl, {
@@ -571,7 +832,55 @@ async function extractDownloadLinks(postUrl, siteType = 'skidrow') {
     const html = await response.text();
     const downloadLinks = [];
 
-    if (siteType === 'skidrow') {
+        // Prioritize "Manual Grab" for GameDrive if extras are present
+    if (siteType === 'gamedrive') {
+      const extrasRegex = /\b(soundtrack|mp3)\b/i;
+      if (extrasRegex.test(html)) {
+        return [{
+          type: 'manual',
+          service: 'Manual Grab',
+          url: postUrl,
+          text: 'Post contains extras, grab manually'
+        }];
+      }
+
+      // If no extras are found, proceed to scrape other links
+      // Corrected regex to handle all characters in the hash
+      const cryptRegex = /https?:\/\/crypt\.cybar\.xyz\/(?:link)?\#?([A-Za-z0-9_\-\+\/=]+)/gi;
+      let match;
+      while ((match = cryptRegex.exec(html)) !== null) {
+        const cryptId = match[1];
+        const cryptUrl = `https://crypt.cybar.xyz/#${cryptId}`;
+        if (!downloadLinks.some(l => l.url === cryptUrl)) {
+          downloadLinks.push({ type: 'crypt', service: 'Crypt', url: cryptUrl, text: 'Encrypted Link' });
+        }
+      }
+
+      const approvedHosters = [
+        'mediafire.com', 'mega.nz', '1fichier.com', 'rapidgator.net', 'uploaded.net', 'turbobit.net',
+        'nitroflare.com', 'katfile.com', 'pixeldrain.com', 'gofile.io', 'mixdrop.to', 'krakenfiles.com',
+        'filefactory.com', 'dailyuploads.net', 'multiup.io', 'drive.google.com', 'dropbox.com', 'onedrive.live.com', '1337x.to'
+      ];
+      const hosterRegex = new RegExp(`<a[^>]+href=["'](https?://[^"']*(?:${approvedHosters.join('|')})[^"']*)["']`, 'gi');
+      while ((match = hosterRegex.exec(html)) !== null) {
+        const url = match[1];
+        const service = extractServiceName(url);
+        if (!downloadLinks.some(l => l.url === url)) {
+          downloadLinks.push({ type: 'hosting', service, url, text: service });
+        }
+      }
+
+      const torrentRegex = /<a[^>]+href=["'](magnet:[^"']*?)["'][^>]*>|<a[^>]+href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>/gi;
+      while ((match = torrentRegex.exec(html)) !== null) {
+        const url = match[1] || match[2];
+        if (url && !downloadLinks.some(l => l.url === url)) {
+          downloadLinks.push({ type: 'torrent', url, text: url.startsWith('magnet:') ? 'Magnet Link' : 'Torrent File' });
+        }
+      }
+
+      const maxLinks = siteType === 'gamedrive' ? 20 : (siteType === 'freegog' ? 20 : 15);
+      return downloadLinks.slice(0, maxLinks);
+    } else if (siteType === 'skidrow') {
       // Handle codecolorer blocks with filenames
       const codeColorerRegex = /<div class="codecolorer-container[^>]*>[\s\S]*?<div class="text codecolorer">(.*?)<\/div>[\s\S]*?<\/div>/gi;
       let codeMatch;
@@ -625,7 +934,7 @@ async function extractDownloadLinks(postUrl, siteType = 'skidrow') {
           downloadLinks.push({ type: 'torrent', service: url.startsWith('magnet:') ? 'Magnet' : 'Torrent', url, text: linkText || (url.startsWith('magnet:') ? 'Magnet Link' : 'Torrent File') });
         }
       }
-      
+
       const freegogBtnRegex = /<a[^>]+class=["'][^"']*download-btn[^"']*["'][^>]+href=["'](https?:\/\/gdl\.freegogpcgames\.xyz\/[^"']+)["'][^>]*>([^<]+)<\/a>/gi;
       let fb;
       while ((fb = freegogBtnRegex.exec(html)) !== null) {
@@ -652,7 +961,7 @@ async function extractDownloadLinks(postUrl, siteType = 'skidrow') {
       }
     }
 
-    // Generic hosting/torrent patterns for both sites
+    // Generic hosting/torrent patterns for all sites (skidrow/freegog)
     const hostingServices = [
       'mediafire.com','mega.nz','mega.co.nz','1fichier.com','rapidgator.net',
       'uploaded.net','turbobit.net','nitroflare.com','katfile.com',
@@ -679,99 +988,11 @@ async function extractDownloadLinks(postUrl, siteType = 'skidrow') {
       }
     }
 
-    const maxLinks = siteType === 'freegog' ? 20 : 15;
+    const maxLinks = siteType === 'gamedrive' ? 20 : (siteType === 'freegog' ? 20 : 15);
     return downloadLinks.slice(0, maxLinks);
 
   } catch (err) {
     console.error(`Error extracting download links from ${postUrl}:`, err);
     return [];
   }
-}
-
-function isValidDownloadUrl(url) {
-  const hostingServices = {
-    'mediafire.com': 'MediaFire',
-    'mega.nz': 'MEGA',
-    'mega.co.nz': 'MEGA',
-    '1fichier.com': '1Fichier',
-    'rapidgator.net': 'RapidGator',
-    'uploaded.net': 'Uploaded',
-    'turbobit.net': 'TurboBit',
-    'nitroflare.com': 'NitroFlare',
-    'katfile.com': 'KatFile',
-    'pixeldrain.com': 'PixelDrain',
-    'gofile.io': 'GoFile',
-    'mixdrop.to': 'MixDrop',
-    'krakenfiles.com': 'KrakenFiles',
-    'filefactory.com': 'FileFactory',
-    'dailyuploads.net': 'DailyUploads',
-    'multiup.io': 'MultiUp',
-    'zippyshare.com': 'ZippyShare',
-    'drive.google.com': 'Google Drive',
-    'dropbox.com': 'Dropbox',
-    'onedrive.live.com': 'OneDrive'
-  };
-
-  try {
-    const hostname = new URL(url).hostname;
-    // ✅ Convert object keys to array and check
-    return Object.keys(hostingServices).some(domain => hostname.includes(domain));
-  } catch (e) {
-    return false;
-  }
-}
-
-function extractServiceName(url) {
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.toLowerCase();
-
-    if (host.includes('freegogpcgames.com') || host.includes('gdl.freegogpcgames.xyz')) {
-      return 'FreeGOG';
-    }
-    if (host.includes('mediafire')) return 'Mediafire';
-    if (host.includes('mega')) return 'Mega';
-    if (host.includes('1fichier')) return '1Fichier';
-    if (host.includes('rapidgator')) return 'Rapidgator';
-    if (host.includes('uploaded')) return 'Uploaded';
-    if (host.includes('turbobit')) return 'Turbobit';
-    if (host.includes('nitroflare')) return 'Nitroflare';
-    if (host.includes('katfile')) return 'Katfile';
-    if (host.includes('pixeldrain')) return 'Pixeldrain';
-    if (host.includes('gofile')) return 'Gofile';
-    if (host.includes('mixdrop')) return 'Mixdrop';
-    if (host.includes('krakenfiles')) return 'Krakenfiles';
-    if (host.includes('filefactory')) return 'FileFactory';
-    if (host.includes('dailyuploads')) return 'DailyUploads';
-    if (host.includes('multiup')) return 'MultiUp';
-    if (host.includes('zippyshare')) return 'Zippyshare';
-    if (host.includes('drive.google')) return 'Google Drive';
-    if (host.includes('dropbox')) return 'Dropbox';
-    if (host.includes('onedrive')) return 'OneDrive';
-    if (host.includes('torrent')) return 'Torrent';
-
-    return host;
-  } catch {
-    return 'Unknown';
-  }
-}
-
-function stripHtml(html) {
-  return html.replace(/<[^>]*>?/gm, '');
-}
-
-function extractDescription(content) {
-  if (!content) return '';
-  const divRegex = /<div[^>]*class="entry-content"[^>]*>([\s\S]*?)<\/div>/i;
-  const match = content.match(divRegex);
-  if (match && match[1]) {
-    const contentWithoutDiv = match[1];
-    const imageAndLinkRegex = /<img[^>]*>|<a[^>]*>(.*?)<\/a>|Download Links|Password|Title:|Genre:|Developer:|Publisher:|Release Name:|Game Version:|Size:|Interface Language:|Audio Language:|Subtitles Language:|Crack:|Minimun:|Operating system:|CPU:|RAM:|Hard disk:|Video card:|Installation:|Game Features:|Repack Features:|Description:|Screenshots:/gi;
-    const strippedContent = contentWithoutDiv.replace(imageAndLinkRegex, (match) => {
-      const linkTextMatch = /<a[^>]*>(.*?)<\/a>/i.exec(match);
-      return linkTextMatch ? linkTextMatch[1] : '';
-    });
-    return stripHtml(strippedContent).trim().split('\n').filter(line => line.trim() !== '').join('\n');
-  }
-  return stripHtml(content).trim();
 }
