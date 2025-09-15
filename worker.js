@@ -86,7 +86,6 @@ export default {
 		try {
 			const parsed = new URL(url);
 			const host = parsed.hostname.toLowerCase();
-
 			if (host.includes('gamedrive.org')) return 'GameDrive';
 			if (host.includes('torrent.cybar.xyz')) return 'CybarTorrent';
 			if (host.includes('freegogpcgames.com') || host.includes('gdl.freegogpcgames.xyz')) {
@@ -103,7 +102,7 @@ export default {
 			if (host.includes('pixeldrain')) return 'Pixeldrain';
 			if (host.includes('gofile')) return 'Gofile';
 			if (host.includes('mixdrop')) return 'Mixdrop';
-			if (host.includes('krakenfiles')) return 'Krakenfiles';
+			if (host.includes('krakenfiles')) return 'KrakenFiles';
 			if (host.includes('filefactory')) return 'FileFactory';
 			if (host.includes('dailyuploads')) return 'DailyUploads';
 			if (host.includes('multiup')) return 'MultiUp';
@@ -112,7 +111,10 @@ export default {
 			if (host.includes('dropbox')) return 'Dropbox';
 			if (host.includes('onedrive')) return 'OneDrive';
 			if (host.includes('torrent')) return 'Torrent';
-
+			// Add SteamRip specific hosters
+			if (host.includes('buzzheavier')) return 'BuzzHeavier';
+			if (host.includes('datanodes')) return 'DataNodes';
+			if (host.includes('filecrypt')) return 'FileCrypt';
 			return host;
 		} catch {
 			return 'Unknown';
@@ -362,6 +364,11 @@ export default {
 				baseUrl: 'https://gamedrive.org/wp-json/wp/v2/posts',
 				type: 'gamedrive',
 				name: 'GameDrive'
+			},
+			{
+				baseUrl: 'https://steamrip.com/wp-json/wp/v2/posts',
+				type: 'steamrip',
+				name: 'SteamRip'
 			}];
 
 		const sitePromises = sites.map(site => fetchRecentUploadsFromSite(site));
@@ -412,7 +419,6 @@ export default {
 
 	async function fetchAllSearchResults(searchQuery, siteParam) {
 		const sites = [];
-
 		if (siteParam === 'all' || !siteParam) {
 			sites.push(
 				{
@@ -423,6 +429,9 @@ export default {
 				},
 				{
 					baseUrl: 'https://gamedrive.org/wp-json/wp/v2/posts', type: 'gamedrive', name: 'GameDrive'
+				},
+				{
+					baseUrl: 'https://steamrip.com/wp-json/wp/v2/posts', type: 'steamrip', name: 'SteamRip'
 				}
 			);
 		} else if (siteParam === 'both') {
@@ -498,23 +507,45 @@ export default {
 	async function fetchRecentUploadsFromSite(site) {
 		try {
 			const params = new URLSearchParams( {
-				per_page: MAX_POSTS_PER_SITE.toString(),
-				page: '1',
 				orderby: 'date',
 				order: 'desc'
 			});
 
-			// For GameDrive, only include Scene Release category (id = 3)
+			// For GameDrive, include categories filter
 			if (site.type === 'gamedrive') {
 				params.set('categories', '3');
 			}
 
+			// Only add per_page and page for sites that aren't FreeGOG or SteamRip
+			if (site.type !== 'freegog' && site.type !== 'steamrip') {
+				params.set('per_page', MAX_POSTS_PER_SITE.toString());
+				params.set('page', '1');
+			}
+
 			const url = `${site.baseUrl}?${params}`;
-			const response = await fetch(url, {
-				headers: {
-					'User-Agent': 'Cloudflare-Workers-Search-API/2.0'
+			console.log(`Fetching recent uploads from ${site.name}: ${url}`);
+
+			let response;
+			if (site.type === 'steamrip') {
+				// Use FlareSolverr for SteamRip
+				const htmlContent = await fetchWithFlareSolverr(url);
+				// Parse the HTML to extract JSON from the WordPress REST API response
+				const jsonMatch = htmlContent.match(/\[.*\]/);
+				if (!jsonMatch) {
+					throw new Error('Could not parse WordPress REST API response from SteamRip');
 				}
-			});
+				response = {
+					ok: true,
+					json: () => JSON.parse(jsonMatch[0])
+				};
+			} else {
+				// Normal fetch for other sites
+				response = await fetch(url, {
+					headers: {
+						'User-Agent': 'Cloudflare-Workers-Search-API/2.0'
+					}
+				});
+			}
 
 			if (!response.ok) {
 				throw new Error(`${site.name} API returned ${response.status}: ${response.statusText}`);
@@ -544,30 +575,50 @@ export default {
 		try {
 			const params = new URLSearchParams( {
 				search: searchQuery,
-				per_page: MAX_POSTS_PER_SITE.toString(),
 				orderby: 'date',
 				order: 'desc'
 			});
 
-			// Filter search results to Scene Release on GameDrive
+			// For GameDrive, include categories filter
 			if (site.type === 'gamedrive') {
 				params.set('categories', '3');
 			}
 
+			// Only add per_page for sites that aren't FreeGOG or SteamRip
+			if (site.type !== 'freegog' && site.type !== 'steamrip') {
+				params.set('per_page', MAX_POSTS_PER_SITE.toString());
+			}
+
 			const url = `${site.baseUrl}?${params}`;
-			const response = await fetch(url, {
-				headers: {
-					'User-Agent': 'Cloudflare-Workers-Search-API/2.0'
+			console.log(`Fetching from ${site.name}: ${url}`);
+
+			let response;
+			if (site.type === 'steamrip') {
+				// Use FlareSolverr for SteamRip
+				const htmlContent = await fetchWithFlareSolverr(url);
+				// Parse the HTML to extract JSON from the WordPress REST API response
+				const jsonMatch = htmlContent.match(/\[.*\]/);
+				if (!jsonMatch) {
+					throw new Error('Could not parse WordPress REST API response from SteamRip');
 				}
-			});
+				response = {
+					ok: true,
+					json: () => JSON.parse(jsonMatch[0])
+				};
+			} else {
+				// Normal fetch for other sites
+				response = await fetch(url, {
+					headers: {
+						'User-Agent': 'Cloudflare-Workers-Search-API/2.0'
+					}
+				});
+			}
 
 			if (!response.ok) {
 				throw new Error(`${site.name} API returned ${response.status}: ${response.statusText}`);
 			}
 
-			// The API's search is reliable, so we directly use its results.
 			const posts = await response.json();
-
 			const transformedPosts = await Promise.all(
 				posts.map(async (post) => transformPost(post, site, true))
 			);
@@ -586,6 +637,7 @@ export default {
 			};
 		}
 	}
+
 
 	async function transformPost(post, site, fetchLinks = false) {
 		const downloadLinks = fetchLinks ? await extractDownloadLinks(post.link, site.type): [];
@@ -774,9 +826,12 @@ export default {
 			'dropbox.com': 'Dropbox',
 			'onedrive.live.com': 'OneDrive',
 			'gamedrive.org': 'GameDrive',
-			'torrent.cybar.xyz': 'CybarTorrent'
+			'torrent.cybar.xyz': 'CybarTorrent',
+			// Add SteamRip specific hosters
+			'buzzheavier.com': 'BuzzHeavier',
+			'datanodes.to': 'DataNodes',
+			'filecrypt.co': 'FileCrypt'
 		};
-
 		try {
 			const hostname = new URL(url).hostname;
 			return Object.keys(hostingServices).some(domain => hostname.includes(domain));
@@ -785,6 +840,38 @@ export default {
 		}
 	}
 
+	async function fetchWithFlareSolverr(url) {
+		const flaresolverrUrl = 'https://flare.iforgor.cc/v1';
+
+		try {
+			const response = await fetch(flaresolverrUrl, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({
+					cmd: 'request.get',
+					url: url,
+					userAgent: 'Cloudflare-Workers-Search-API/2.0'
+				})
+			});
+
+			if (!response.ok) {
+				throw new Error(`FlareSolverr request failed: ${response.status}`);
+			}
+
+			const data = await response.json();
+
+			if (data.status !== 'ok') {
+				throw new Error(`FlareSolverr error: ${data.message}`);
+			}
+
+			return data.solution.response;
+		} catch (error) {
+			console.error('FlareSolverr error:', error);
+			throw error;
+		}
+	}
 
 	async function handleDecrypt(hash, corsHeaders, env, ctx) {
 		const cacheKey = `decrypt:${hash}`;
@@ -967,230 +1054,222 @@ export default {
 
 	async function extractDownloadLinks(postUrl, siteType = 'skidrow') {
 		try {
-			const response = await fetch(postUrl, {
-				headers: {
-					'User-Agent': 'Cloudflare-Workers-Link-Extractor/2.0'
-				}
-			});
+			let html;
 
-			if (!response.ok) {
-				console.warn(`Failed to fetch post content from ${postUrl}`);
-				return [];
+			if (siteType === 'steamrip') {
+				// Use FlareSolverr for SteamRip
+				html = await fetchWithFlareSolverr(postUrl);
+			} else {
+				// Normal fetch for other sites
+				const response = await fetch(postUrl, {
+					headers: {
+						'User-Agent': 'Cloudflare-Workers-Link-Extractor/2.0'
+					}
+				});
+
+				if (!response.ok) {
+					console.warn(`Failed to fetch post content from ${postUrl}`);
+					return [];
+				}
+
+				html = await response.text();
 			}
 
-			const html = await response.text();
 			const downloadLinks = [];
 
-			// Prioritize "Manual Grab" for GameDrive if extras are present
-			if (siteType === 'gamedrive') {
-				const extrasRegex = /\b(soundtrack|mp3)\b/i;
-				if (extrasRegex.test(html)) {
-					return [{
-						type: 'manual',
-						service: 'Manual Grab',
-						url: postUrl,
-						text: 'Post contains extras, grab manually'
-					}];
+			// Add SteamRip specific extraction logic here
+			if (siteType === 'steamrip') {
+				// Extract FileCrypt links but mark them as requiring manual CAPTCHA solving
+				const filecryptRegex = /https?:\/\/filecrypt\.co\/(?:Container\/|Link\/)([A-Z0-9]+)/gi;
+				let filecryptMatch;
+				while ((filecryptMatch = filecryptRegex.exec(html)) !== null) {
+					const filecryptId = filecryptMatch[1];
+					const filecryptUrl = filecryptMatch[0];
+					if (!downloadLinks.some(l => l.url === filecryptUrl)) {
+						downloadLinks.push({
+							type: 'filecrypt',
+							service: 'FileCrypt',
+							url: filecryptUrl,
+							text: 'FileCrypt (Requires CAPTCHA)',
+							id: filecryptId,
+							requiresCaptcha: true
+						});
+					}
 				}
 
-				// If no extras are found, proceed to scrape other links
-				// Corrected regex to handle all characters in the hash
-				const cryptRegex = /https?:\/\/crypt\.cybar\.xyz\/(?:link)?\#?([A-Za-z0-9_\-\+\/=]+)/gi;
+				// Extract direct links from SteamRip
+				const linkRegex = /<a[^>]+href=["'](https?:\/\/[^"']*(?:mediafire|mega|1fichier|rapidgator|uploaded|turbobit|nitroflare|katfile|pixeldrain|gofile|mixdrop|krakenfiles|filefactory|dailyuploads|multiup|drive\.google|dropbox|onedrive|buzzheavier|datanodes)[^"']*)["'][^>]*>([^<]*)<\/a>/gi;
 				let match;
-				while ((match = cryptRegex.exec(html)) !== null) {
-					const cryptId = match[1];
-					const cryptUrl = `https://crypt.cybar.xyz/#${cryptId}`;
-					if (!downloadLinks.some(l => l.url === cryptUrl)) {
-						downloadLinks.push({
-							type: 'crypt', service: 'Crypt', url: cryptUrl, text: 'Encrypted Link'
-						});
-					}
-				}
-
-				const approvedHosters = [
-					'mediafire.com',
-					'mega.nz',
-					'1fichier.com',
-					'rapidgator.net',
-					'uploaded.net',
-					'turbobit.net',
-					'nitroflare.com',
-					'katfile.com',
-					'pixeldrain.com',
-					'gofile.io',
-					'mixdrop.to',
-					'krakenfiles.com',
-					'filefactory.com',
-					'dailyuploads.net',
-					'multiup.io',
-					'drive.google.com',
-					'dropbox.com',
-					'onedrive.live.com',
-					'1337x.to'
-				];
-				const hosterRegex = new RegExp(`<a[^>]+href=["'](https?://[^"']*(?:${approvedHosters.join('|')})[^"']*)["']`, 'gi');
-				while ((match = hosterRegex.exec(html)) !== null) {
+				while ((match = linkRegex.exec(html)) !== null) {
 					const url = match[1];
+					const linkText = stripHtml(match[2]).trim();
 					const service = extractServiceName(url);
-					if (!downloadLinks.some(l => l.url === url)) {
+					if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
 						downloadLinks.push({
-							type: 'hosting', service, url, text: service
+							type: 'hosting',
+							service,
+							url,
+							text: linkText || service
 						});
 					}
 				}
 
+				// Also look for torrent links
 				const torrentRegex = /<a[^>]+href=["'](magnet:[^"']*?)["'][^>]*>|<a[^>]+href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>/gi;
 				while ((match = torrentRegex.exec(html)) !== null) {
 					const url = match[1] || match[2];
 					if (url && !downloadLinks.some(l => l.url === url)) {
 						downloadLinks.push({
-							type: 'torrent', url, text: url.startsWith('magnet:') ? 'Magnet Link': 'Torrent File'
-						});
-					}
-				}
-
-				const maxLinks = siteType === 'gamedrive' ? 20: (siteType === 'freegog' ? 20: 15);
-				return downloadLinks.slice(0, maxLinks);
-			} else if (siteType === 'skidrow') {
-				// Handle codecolorer blocks with filenames
-				const codeColorerRegex = /<div class="codecolorer-container[^>]*>[\s\S]*?<div class="text codecolorer">(.*?)<\/div>[\s\S]*?<\/div>/gi;
-				let codeMatch;
-				while ((codeMatch = codeColorerRegex.exec(html)) !== null) {
-					const filename = codeMatch[1].trim();
-					if (filename && !filename.includes('Uploading') && filename.length > 3) {
-						const beforeCode = html.substring(0, codeMatch.index);
-						const linkMatch = beforeCode.match(/<a[^>]+href=["'](.*?)["'][^>]*>[\s\S]*?$/);
-						if (linkMatch && linkMatch[1]) {
-							const url = linkMatch[1];
-							const service = extractServiceName(url);
-							if (!downloadLinks.some(link => link.url === url)) {
-								downloadLinks.push({
-									type: 'hosting',
-									service,
-									url,
-									filename,
-									text: `${service} - ${filename}`
-								});
-							}
-						}
-					}
-				}
-			} else if (siteType === 'freegog') {
-				// FreeGOG patterns
-				const downloadRegex = /<a[^>]*href=["'](https?:\/\/[^"']*(?:mediafire|mega|1fichier|rapidgator|uploaded|turbobit|nitroflare|katfile|pixeldrain|gofile|mixdrop|krakenfiles|filefactory|dailyuploads|multiup|drive\.google|dropbox|onedrive|torrents?)[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
-				let m;
-				while ((m = downloadRegex.exec(html)) !== null) {
-					const url = m[1];
-					const linkText = stripHtml(m[2]).trim();
-					const service = extractServiceName(url);
-					if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
-						downloadLinks.push({
-							type: 'hosting', service, url, text: linkText || service
-						});
-					}
-				}
-
-				const fileRegex = /<a[^>]*href=["'](https?:\/\/[^"']*\.(?:exe|zip|rar|7z|iso|bin|cue|mdf|mds)[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
-				while ((m = fileRegex.exec(html)) !== null) {
-					const url = m[1];
-					const linkText = stripHtml(m[2]).trim();
-					if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
-						downloadLinks.push({
-							type: 'direct', service: 'Direct Download', url, text: linkText || 'Direct Download'
-						});
-					}
-				}
-
-				const torrentRegex = /<a[^>]*href=["'](magnet:[^"']*?)["'][^>]*>([^<]*)<\/a>|<a[^>]*href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
-				while ((m = torrentRegex.exec(html)) !== null) {
-					const url = m[1] || m[3];
-					const linkText = stripHtml(m[2] || m[4]).trim();
-					if (url && !downloadLinks.some(l => l.url === url)) {
-						downloadLinks.push({
-							type: 'torrent', service: url.startsWith('magnet:') ? 'Magnet': 'Torrent', url, text: linkText || (url.startsWith('magnet:') ? 'Magnet Link': 'Torrent File')
-						});
-					}
-				}
-
-				const freegogBtnRegex = /<a[^>]+class=["'][^"']*download-btn[^"']*["'][^>]+href=["'](https?:\/\/gdl\.freegogpcgames\.xyz\/[^"']+)["'][^>]*>([^<]+)<\/a>/gi;
-				let fb;
-				while ((fb = freegogBtnRegex.exec(html)) !== null) {
-					const url = fb[1];
-					const linkText = stripHtml(fb[2]).trim();
-					if (!downloadLinks.some(l => l.url === url)) {
-						downloadLinks.push({
-							type: 'direct',
-							service: 'FreeGOG',
+							type: 'torrent',
 							url,
-							text: linkText || 'FreeGOG Download'
+							text: url.startsWith('magnet') ? 'Magnet Link': 'Torrent File'
 						});
 					}
-				}
-
-				const buttonRegex = /<(?:a|button)[^>]*(?:class|id)=["'][^"']*(?:download|btn|button)[^"']*["'][^>]*href=["'](https?:\/\/[^"']+)["'][^>]*>([^<]*)<\/(?:a|button)>/gi;
-				while ((m = buttonRegex.exec(html)) !== null) {
-					const url = m[1];
-					const linkText = stripHtml(m[2]).trim();
-					const service = extractServiceName(url);
-					if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
-						downloadLinks.push({
-							type: 'hosting', service, url, text: linkText || service
-						});
-					}
-				}
-			}
-
-			// Generic hosting/torrent patterns for all sites (skidrow/freegog)
-			const hostingServices = [
-				'mediafire.com',
-				'mega.nz',
-				'mega.co.nz',
-				'1fichier.com',
-				'rapidgator.net',
-				'uploaded.net',
-				'turbobit.net',
-				'nitroflare.com',
-				'katfile.com',
-				'pixeldrain.com',
-				'gofile.io',
-				'mixdrop.to',
-				'krakenfiles.com',
-				'filefactory.com',
-				'dailyuploads.net',
-				'multiup.io',
-				'zippyshare.com',
-				'drive.google.com',
-				'dropbox.com',
-				'onedrive.live.com'
-			];
-			const hostingRegex = new RegExp(`<a[^>]+href=["'](https?://[^"']*(?:${hostingServices.join('|')})[^"']*?)["'][^>]*>`, 'gi');
-			let hm;
-			while ((hm = hostingRegex.exec(html)) !== null) {
-				const url = hm[1];
-				const service = extractServiceName(url);
-				if (!downloadLinks.some(l => l.url === url)) {
-					downloadLinks.push({
-						type: 'hosting', service, url, text: service
-					});
-				}
-			}
-
-			const torrentRegex = /<a[^>]+href=["'](magnet:[^"']*?)["'][^>]*>|<a[^>]+href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>/gi;
-			let tm;
-			while ((tm = torrentRegex.exec(html)) !== null) {
-				const url = tm[1] || tm[2];
-				if (url && !downloadLinks.some(l => l.url === url)) {
-					downloadLinks.push({
-						type: 'torrent', url, text: url.startsWith('magnet:') ? 'Magnet Link': 'Torrent File'
-					});
 				}
 			}
 
 			const maxLinks = siteType === 'gamedrive' ? 20: (siteType === 'freegog' ? 20: 15);
 			return downloadLinks.slice(0, maxLinks);
+		} else if (siteType === 'skidrow') {
+			// Handle codecolorer blocks with filenames
+			const codeColorerRegex = /<div class="codecolorer-container[^>]*>[\s\S]*?<div class="text codecolorer">(.*?)<\/div>[\s\S]*?<\/div>/gi;
+			let codeMatch;
+			while ((codeMatch = codeColorerRegex.exec(html)) !== null) {
+				const filename = codeMatch[1].trim();
+				if (filename && !filename.includes('Uploading') && filename.length > 3) {
+					const beforeCode = html.substring(0, codeMatch.index);
+					const linkMatch = beforeCode.match(/<a[^>]+href=["'](.*?)["'][^>]*>[\s\S]*?$/);
+					if (linkMatch && linkMatch[1]) {
+						const url = linkMatch[1];
+						const service = extractServiceName(url);
+						if (!downloadLinks.some(link => link.url === url)) {
+							downloadLinks.push({
+								type: 'hosting',
+								service,
+								url,
+								filename,
+								text: `${service} - ${filename}`
+							});
+						}
+					}
+				}
+			}
+		} else if (siteType === 'freegog') {
+			// FreeGOG patterns
+			const downloadRegex = /<a[^>]*href=["'](https?:\/\/[^"']*(?:mediafire|mega|1fichier|rapidgator|uploaded|turbobit|nitroflare|katfile|pixeldrain|gofile|mixdrop|krakenfiles|filefactory|dailyuploads|multiup|drive\.google|dropbox|onedrive|torrents?)[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
+			let m;
+			while ((m = downloadRegex.exec(html)) !== null) {
+				const url = m[1];
+				const linkText = stripHtml(m[2]).trim();
+				const service = extractServiceName(url);
+				if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
+					downloadLinks.push({
+						type: 'hosting', service, url, text: linkText || service
+					});
+				}
+			}
 
-		} catch (err) {
-			console.error(`Error extracting download links from ${postUrl}:`, err);
-			return [];
+			const fileRegex = /<a[^>]*href=["'](https?:\/\/[^"']*\.(?:exe|zip|rar|7z|iso|bin|cue|mdf|mds)[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
+			while ((m = fileRegex.exec(html)) !== null) {
+				const url = m[1];
+				const linkText = stripHtml(m[2]).trim();
+				if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
+					downloadLinks.push({
+						type: 'direct', service: 'Direct Download', url, text: linkText || 'Direct Download'
+					});
+				}
+			}
+
+			const torrentRegex = /<a[^>]*href=["'](magnet:[^"']*?)["'][^>]*>([^<]*)<\/a>|<a[^>]*href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
+			while ((m = torrentRegex.exec(html)) !== null) {
+				const url = m[1] || m[3];
+				const linkText = stripHtml(m[2] || m[4]).trim();
+				if (url && !downloadLinks.some(l => l.url === url)) {
+					downloadLinks.push({
+						type: 'torrent', service: url.startsWith('magnet:') ? 'Magnet': 'Torrent', url, text: linkText || (url.startsWith('magnet:') ? 'Magnet Link': 'Torrent File')
+					});
+				}
+			}
+
+			const freegogBtnRegex = /<a[^>]+class=["'][^"']*download-btn[^"']*["'][^>]+href=["'](https?:\/\/gdl\.freegogpcgames\.xyz\/[^"']+)["'][^>]*>([^<]+)<\/a>/gi;
+			let fb;
+			while ((fb = freegogBtnRegex.exec(html)) !== null) {
+				const url = fb[1];
+				const linkText = stripHtml(fb[2]).trim();
+				if (!downloadLinks.some(l => l.url === url)) {
+					downloadLinks.push({
+						type: 'direct',
+						service: 'FreeGOG',
+						url,
+						text: linkText || 'FreeGOG Download'
+					});
+				}
+			}
+
+			const buttonRegex = /<(?:a|button)[^>]*(?:class|id)=["'][^"']*(?:download|btn|button)[^"']*["'][^>]*href=["'](https?:\/\/[^"']+)["'][^>]*>([^<]*)<\/(?:a|button)>/gi;
+			while ((m = buttonRegex.exec(html)) !== null) {
+				const url = m[1];
+				const linkText = stripHtml(m[2]).trim();
+				const service = extractServiceName(url);
+				if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
+					downloadLinks.push({
+						type: 'hosting', service, url, text: linkText || service
+					});
+				}
+			}
 		}
+
+		// Generic hosting/torrent patterns for all sites (skidrow/freegog)
+		const hostingServices = [
+			'mediafire.com',
+			'mega.nz',
+			'mega.co.nz',
+			'1fichier.com',
+			'rapidgator.net',
+			'uploaded.net',
+			'turbobit.net',
+			'nitroflare.com',
+			'katfile.com',
+			'pixeldrain.com',
+			'gofile.io',
+			'mixdrop.to',
+			'krakenfiles.com',
+			'filefactory.com',
+			'dailyuploads.net',
+			'multiup.io',
+			'zippyshare.com',
+			'drive.google.com',
+			'dropbox.com',
+			'onedrive.live.com'
+		];
+		const hostingRegex = new RegExp(`<a[^>]+href=["'](https?://[^"']*(?:${hostingServices.join('|')})[^"']*?)["'][^>]*>`, 'gi');
+		let hm;
+		while ((hm = hostingRegex.exec(html)) !== null) {
+			const url = hm[1];
+			const service = extractServiceName(url);
+			if (!downloadLinks.some(l => l.url === url)) {
+				downloadLinks.push({
+					type: 'hosting', service, url, text: service
+				});
+			}
+		}
+
+		const torrentRegex = /<a[^>]+href=["'](magnet:[^"']*?)["'][^>]*>|<a[^>]+href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>/gi;
+		let tm;
+		while ((tm = torrentRegex.exec(html)) !== null) {
+			const url = tm[1] || tm[2];
+			if (url && !downloadLinks.some(l => l.url === url)) {
+				downloadLinks.push({
+					type: 'torrent', url, text: url.startsWith('magnet:') ? 'Magnet Link': 'Torrent File'
+				});
+			}
+		}
+
+		const maxLinks = siteType === 'gamedrive' ? 20: (siteType === 'freegog' ? 20: 15);
+		return downloadLinks.slice(0, maxLinks);
+
+	} catch (err) {
+		console.error(`Error extracting download links from ${postUrl}:`, err);
+		return [];
 	}
+}
