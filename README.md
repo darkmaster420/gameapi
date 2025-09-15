@@ -34,7 +34,7 @@ curl "https://<your-worker-subdomain>.workers.dev/?search=witcher&site=all"
 ```
 
 
-GET /recent
+### GET /recent
 
 Fetch the latest uploads across all sources.
 
@@ -43,7 +43,7 @@ Example:
 curl "https://<your-worker-subdomain>.workers.dev/recent"
 ```
 
-GET /proxy-image?url=<encodedUrl>
+### GET /proxy-image?url=<encodedUrl>
 
 Proxy and serve external images safely.
 
@@ -52,27 +52,28 @@ Example:
 curl "https://<your-worker-subdomain>.workers.dev/proxy-image?url=https%3A%2F%2Fexample.com%2Fcover.jpg"
 ```
 
-GET /decrypt?hash=<cryptHash>
+### GET /decrypt?hash=<cryptHash>
 
 Decrypts a crypt.gg–style hash into the real link and service type.
 
 Response:
-
+```json
 {
   "url": "https://mega.nz/...",
   "service": "Mega"
 }
-
+```
 Example:
 ```bash
 curl "https://<your-worker-subdomain>.workers.dev/decrypt?hash=abc123xyz"
 ```
 
+---
 
-📦 Response Structure
+## 📦 Response Structure
 
 All search/recent endpoints return JSON in the form:
-
+```json
 {
   "success": true,
   "results": [
@@ -102,12 +103,13 @@ All search/recent endpoints return JSON in the form:
     "FreeGOGPCGames": 5
   }
 }
-
-🖥 Frontend Integration
+```
+---
+## 🖥 Frontend Integration
 
 This Worker is designed to be used with a React frontend.
 Here’s an example integration (App.js from this project):
-
+```json
 const WORKER_URL = 'https://<your-worker-subdomain>.workers.dev';
 
 const searchGames = async (query) => {
@@ -124,7 +126,7 @@ const decryptCryptLink = async (hash) => {
 
 const getProxiedImageUrl = (url) =>
   `${WORKER_URL}/proxy-image?url=${encodeURIComponent(url)}`;
-
+```
 In the React app:
 
 Calls /recent on initial load to display the newest games.
@@ -135,28 +137,27 @@ Proxies game images through /proxy-image for reliability.
 
 Handles crypt links by calling /decrypt?hash=... only when a user clicks on them (avoiding Worker subrequest limits).
 
-🛠 Deployment
+## 🛠 Deployment
 
 1. Install Wrangler CLI:
-
+```bash
 npm install -g wrangler
-
+```
 
 2. Login to Cloudflare:
-
+```bash
 wrangler login
-
+```
 
 3. Deploy:
-
+```bash
 wrangler deploy
-
-
+```
 alternatively you can just copy and paste into workers
 
 ---
 
-⚠️ Disclaimer
+## ⚠️ Disclaimer
 
 This project is for educational purposes only.
 It aggregates publicly available data and does not host or distribute any game files.
@@ -165,6 +166,6 @@ Use responsibly.
 
 ---
 
-📄 License
+## 📄 License
 
 MIT
