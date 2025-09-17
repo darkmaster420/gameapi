@@ -77,14 +77,27 @@ export default {
 	// Maximum posts to fetch per site to prevent timeouts
 	const MAX_POSTS_PER_SITE = 10;
 
+	// Global variable to store the SteamRip cookie (in a real implementation, you might want to use KV storage)
+	let steamripCookie = {
+		cf_clearance: null,
+		expires_at: 0
+	};
+
 	// Helper functions for common tasks
 	function stripHtml(html) {
 		return (html || '').replace(/<[^>]*>?/gm, '');
 	}
 
+	// Updated extractServiceName function
 	function extractServiceName(url) {
 		try {
-			const parsed = new URL(url);
+			// Handle protocol-relative URLs (starting with //)
+			let testUrl = url;
+			if (url.startsWith('//')) {
+				testUrl = 'https:' + url;
+			}
+
+			const parsed = new URL(testUrl);
 			const host = parsed.hostname.toLowerCase();
 			if (host.includes('gamedrive.org')) return 'GameDrive';
 			if (host.includes('torrent.cybar.xyz')) return 'CybarTorrent';
@@ -115,8 +128,14 @@ export default {
 			if (host.includes('buzzheavier')) return 'BuzzHeavier';
 			if (host.includes('datanodes')) return 'DataNodes';
 			if (host.includes('filecrypt')) return 'FileCrypt';
+			if (host.includes('megadb')) return 'MegaDB'; // Added for MegaDB links
 			return host;
 		} catch {
+			// If URL parsing fails, try a simple string check
+			if (url.includes('megadb')) return 'MegaDB';
+			if (url.includes('buzzheavier')) return 'BuzzHeavier';
+			if (url.includes('datanodes')) return 'DataNodes';
+			if (url.includes('filecrypt')) return 'FileCrypt';
 			return 'Unknown';
 		}
 	}
@@ -135,6 +154,148 @@ export default {
 			return stripHtml(strippedContent).trim().split('\n').filter(line => line.trim() !== '').join('\n');
 		}
 		return stripHtml(content).trim();
+	}
+
+	// SteamRip cookie management functions
+	// Function to get a fresh cookie from FlareSolverr
+	async function getFreshSteamripCookie() {
+		console.log('Getting fresh cf_clearance cookie for SteamRip');
+
+		try {
+			const flaresolverrUrl = 'https://flare.iforgor.cc/v1';
+			const response = await fetch(flaresolverrUrl, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({
+					cmd: 'request.get',
+					url: 'https://steamrip.com/wp-json/wp/v2/posts',
+					userAgent: 'Cloudflare-Workers-Search-API/2.0'
+				})
+			});
+
+			if (!response.ok) {
+				throw new Error(`FlareSolverr request failed: ${response.status}`);
+			}
+
+			const data = await response.json();
+
+			if (data.status !== 'ok') {
+				throw new Error(`FlareSolverr error: ${data.message}`);
+			}
+
+			// Extract cf_clearance cookie
+			let cf_clearance = null;
+			let expires_at = Date.now() + (4 * 60 * 60 * 1000); // Default 4 hours from now
+
+			if (data.solution.cookies && Array.isArray(data.solution.cookies)) {
+				const cfCookie = data.solution.cookies.find(cookie => cookie.name === 'cf_clearance');
+				if (cfCookie) {
+					cf_clearance = cfCookie.value;
+
+					// Use the actual expiration time if available, otherwise default to 4 hours
+					if (cfCookie.expires) {
+						expires_at = new Date(cfCookie.expires * 1000).getTime();
+					}
+
+					console.log('Successfully obtained cf_clearance cookie:', cf_clearance.substring(0, 20) + '...');
+				}
+			}
+
+			if (!cf_clearance) {
+				throw new Error('Failed to extract cf_clearance cookie from FlareSolverr response');
+			}
+
+			// Update the global cookie variable
+			steamripCookie = {
+				cf_clearance: cf_clearance,
+				expires_at: expires_at
+			};
+
+			return steamripCookie;
+		} catch (error) {
+			console.error('Error getting fresh SteamRip cookie:', error);
+			throw error;
+		}
+	}
+
+	// Function to get a valid cookie (refresh if needed)
+	async function getValidSteamripCookie() {
+		// If we don't have a cookie or it's expired, get a fresh one
+		if (!steamripCookie.cf_clearance || Date.now() >= steamripCookie.expires_at) {
+			return await getFreshSteamripCookie();
+		}
+
+		return steamripCookie;
+	}
+
+	// Function to make authenticated requests to SteamRip (both API and page content)
+	async function fetchSteamrip(url, isPageRequest = false) {
+		try {
+			// Get a valid cookie
+			const cookie = await getValidSteamripCookie();
+
+			const requestType = isPageRequest ? "page": "API";
+			console.log(`Making authenticated request to SteamRip ${requestType}`);
+
+			// Set appropriate user agent based on request type
+			const userAgent = isPageRequest
+			? 'Cloudflare-Workers-Link-Extractor/2.0': 'Cloudflare-Workers-Search-API/2.0';
+
+			// Make the request with the cookie
+			const response = await fetch(url, {
+				headers: {
+					'User-Agent': userAgent,
+					'Cookie': `cf_clearance=${cookie.cf_clearance}`
+				}
+			});
+
+			// If the request fails with a 403 (Forbidden), the cookie might be expired
+			if (response.status === 403) {
+				console.log('Received 403, cookie might be expired, getting a fresh one');
+
+				// Get a fresh cookie
+				const freshCookie = await getFreshSteamripCookie();
+
+				// Retry the request with the fresh cookie
+				const retryResponse = await fetch(url, {
+					headers: {
+						'User-Agent': userAgent,
+						'Cookie': `cf_clearance=${freshCookie.cf_clearance}`
+					}
+				});
+
+				if (!retryResponse.ok) {
+					if (isPageRequest) {
+						console.warn(`Failed to fetch SteamRip page: ${retryResponse.status} ${retryResponse.statusText} (even with fresh cookie)`);
+						return null;
+					} else {
+						throw new Error(`SteamRip API returned ${retryResponse.status}: ${retryResponse.statusText} (even with fresh cookie)`);
+					}
+				}
+
+				return retryResponse;
+			}
+
+			if (!response.ok) {
+				if (isPageRequest) {
+					console.warn(`Failed to fetch SteamRip page: ${response.status} ${response.statusText}`);
+					return null;
+				} else {
+					throw new Error(`SteamRip API returned ${response.status}: ${response.statusText}`);
+				}
+			}
+
+			return response;
+		} catch (error) {
+			console.error(`Error fetching SteamRip:`, error);
+			if (isPageRequest) {
+				return null;
+			} else {
+				throw error;
+			}
+		}
 	}
 
 	async function handleClearDecryptCache(corsHeaders, env) {
@@ -456,6 +617,10 @@ export default {
 			sites.push({
 				baseUrl: 'https://gamedrive.org/wp-json/wp/v2/posts', type: 'gamedrive', name: 'GameDrive'
 			});
+		} else if (siteParam === 'steamrip') {
+			sites.push({
+				baseUrl: 'https://steamrip.com/wp-json/wp/v2/posts', type: 'steamrip', name: 'SteamRip'
+			});
 		}
 
 		const sitePromises = sites.map(site => fetchPostsWithSearch(site, searchQuery));
@@ -527,17 +692,8 @@ export default {
 
 			let response;
 			if (site.type === 'steamrip') {
-				// Use FlareSolverr for SteamRip
-				const htmlContent = await fetchWithFlareSolverr(url);
-				// Parse the HTML to extract JSON from the WordPress REST API response
-				const jsonMatch = htmlContent.match(/\[.*\]/);
-				if (!jsonMatch) {
-					throw new Error('Could not parse WordPress REST API response from SteamRip');
-				}
-				response = {
-					ok: true,
-					json: () => JSON.parse(jsonMatch[0])
-				};
+				// Use our new helper function to make authenticated requests
+				response = await fetchSteamrip(url);
 			} else {
 				// Normal fetch for other sites
 				response = await fetch(url, {
@@ -552,8 +708,13 @@ export default {
 			}
 
 			const posts = await response.json();
+			console.log(`Got ${posts.length} posts from ${site.name}`);
+
+			// Always extract download links for SteamRip, even for recent uploads
+			const fetchLinks = false;
+
 			const transformedPosts = await Promise.all(
-				posts.map(async (post) => transformPost(post, site, false))
+				posts.map(async (post) => transformPost(post, site, fetchLinks))
 			);
 
 			return {
@@ -594,17 +755,8 @@ export default {
 
 			let response;
 			if (site.type === 'steamrip') {
-				// Use FlareSolverr for SteamRip
-				const htmlContent = await fetchWithFlareSolverr(url);
-				// Parse the HTML to extract JSON from the WordPress REST API response
-				const jsonMatch = htmlContent.match(/\[.*\]/);
-				if (!jsonMatch) {
-					throw new Error('Could not parse WordPress REST API response from SteamRip');
-				}
-				response = {
-					ok: true,
-					json: () => JSON.parse(jsonMatch[0])
-				};
+				// Use our new helper function to make authenticated requests
+				response = await fetchSteamripAPI(url);
 			} else {
 				// Normal fetch for other sites
 				response = await fetch(url, {
@@ -619,6 +771,8 @@ export default {
 			}
 
 			const posts = await response.json();
+			console.log(`Got ${posts.length} posts from ${site.name}`);
+
 			const transformedPosts = await Promise.all(
 				posts.map(async (post) => transformPost(post, site, true))
 			);
@@ -803,6 +957,7 @@ export default {
 	}
 
 
+	// Updated isValidDownloadUrl function
 	function isValidDownloadUrl(url) {
 		const hostingServices = {
 			'mediafire.com': 'MediaFire',
@@ -830,13 +985,24 @@ export default {
 			// Add SteamRip specific hosters
 			'buzzheavier.com': 'BuzzHeavier',
 			'datanodes.to': 'DataNodes',
-			'filecrypt.co': 'FileCrypt'
+			'filecrypt.co': 'FileCrypt',
+			'megadb.net': 'MegaDB' // Added for MegaDB links
 		};
+
 		try {
-			const hostname = new URL(url).hostname;
+			// Handle protocol-relative URLs (starting with //)
+			let testUrl = url;
+			if (url.startsWith('//')) {
+				testUrl = 'https:' + url;
+			}
+
+			const parsedUrl = new URL(testUrl);
+			const hostname = parsedUrl.hostname.toLowerCase();
+
 			return Object.keys(hostingServices).some(domain => hostname.includes(domain));
 		} catch (e) {
-			return false;
+			// If URL parsing fails, try a simple string check
+			return Object.keys(hostingServices).some(domain => url.includes(domain));
 		}
 	}
 
@@ -1051,14 +1217,86 @@ export default {
 	/* ---------------------------
    Main download link extractor
    --------------------------- */
-
 	async function extractDownloadLinks(postUrl, siteType = 'skidrow') {
 		try {
 			let html;
+			const downloadLinks = [];
 
 			if (siteType === 'steamrip') {
-				// Use FlareSolverr for SteamRip
-				html = await fetchWithFlareSolverr(postUrl);
+				// Use our consolidated function to fetch the page
+				const response = await fetchSteamrip(postUrl, true);
+
+				if (!response) {
+					console.warn(`Failed to fetch post content from ${postUrl}`);
+					return [];
+				}
+
+				html = await response.text();
+
+				// Extract all href links from SteamRip
+				const hrefRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>([^<]*)<\/a>/gi;
+				let match;
+
+				while ((match = hrefRegex.exec(html)) !== null) {
+					let url = match[1].trim();
+					const linkText = stripHtml(match[2]).trim();
+
+					// Normalize protocol-relative URLs
+					if (url.startsWith('//')) {
+						url = 'https:' + url;
+					}
+
+					// Skip if this URL is already in our list
+					if (downloadLinks.some(l => l.url === url)) continue;
+
+					// Check if this is a valid download URL
+					if (isValidDownloadUrl(url)) {
+						const service = extractServiceName(url);
+
+						// Try to find the service name in the HTML before the link
+						let serviceName = service; // Default to extracted service name
+						const beforeLink = html.substring(0, match.index);
+
+						// Look for service name patterns in the HTML before the link
+						// Pattern 1: Service name in a span before the link
+						const spanPattern = /<span[^>]*>([^<]+)<\/span>\s*<br\s*\/?>\s*<a[^>]+href=/i;
+						const spanMatch = beforeLink.match(spanPattern);
+						if (spanMatch) {
+							serviceName = stripHtml(spanMatch[1]).trim();
+						}
+
+						// Pattern 2: Service name in a paragraph before the link
+						const pPattern = /<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>\s*<a[^>]+href=/i;
+						const pMatch = beforeLink.match(pPattern);
+						if (pMatch) {
+							serviceName = stripHtml(pMatch[1]).trim();
+						}
+
+						// Pattern 3: Service name in a strong tag before the link
+						const strongPattern = /<strong[^>]*>([^<]+)<\/strong>\s*<br\s*\/?>\s*<a[^>]+href=/i;
+						const strongMatch = beforeLink.match(strongPattern);
+						if (strongMatch) {
+							serviceName = stripHtml(strongMatch[1]).trim();
+						}
+
+						// Add to our download links list
+						downloadLinks.push({
+							type: 'hosting',
+							service: serviceName,
+							url: url,
+							text: linkText || serviceName
+						});
+					}
+
+					// Also check for torrent links
+					if (url.startsWith('magnet:') || url.includes('.torrent')) {
+						downloadLinks.push({
+							type: 'torrent',
+							url: url,
+							text: url.startsWith('magnet:') ? 'Magnet Link': 'Torrent File'
+						});
+					}
+				}
 			} else {
 				// Normal fetch for other sites
 				const response = await fetch(postUrl, {
@@ -1073,203 +1311,419 @@ export default {
 				}
 
 				html = await response.text();
-			}
 
-			const downloadLinks = [];
-
-			// Add SteamRip specific extraction logic here
-			if (siteType === 'steamrip') {
-				// Extract FileCrypt links but mark them as requiring manual CAPTCHA solving
-				const filecryptRegex = /https?:\/\/filecrypt\.co\/(?:Container\/|Link\/)([A-Z0-9]+)/gi;
-				let filecryptMatch;
-				while ((filecryptMatch = filecryptRegex.exec(html)) !== null) {
-					const filecryptId = filecryptMatch[1];
-					const filecryptUrl = filecryptMatch[0];
-					if (!downloadLinks.some(l => l.url === filecryptUrl)) {
-						downloadLinks.push({
-							type: 'filecrypt',
-							service: 'FileCrypt',
-							url: filecryptUrl,
-							text: 'FileCrypt (Requires CAPTCHA)',
-							id: filecryptId,
-							requiresCaptcha: true
-						});
+				// Handle each site type specifically
+				if (siteType === 'gamedrive') {
+					// Prioritize "Manual Grab" for GameDrive if extras are present
+					const extrasRegex = /\b(soundtrack|mp3)\b/i;
+					if (extrasRegex.test(html)) {
+						return [{
+							type: 'manual',
+							service: 'Manual Grab',
+							url: postUrl,
+							text: 'Post contains extras, grab manually'
+						}];
 					}
-				}
 
-				// Extract direct links from SteamRip
-				const linkRegex = /<a[^>]+href=["'](https?:\/\/[^"']*(?:mediafire|mega|1fichier|rapidgator|uploaded|turbobit|nitroflare|katfile|pixeldrain|gofile|mixdrop|krakenfiles|filefactory|dailyuploads|multiup|drive\.google|dropbox|onedrive|buzzheavier|datanodes)[^"']*)["'][^>]*>([^<]*)<\/a>/gi;
-				let match;
-				while ((match = linkRegex.exec(html)) !== null) {
-					const url = match[1];
-					const linkText = stripHtml(match[2]).trim();
-					const service = extractServiceName(url);
-					if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
-						downloadLinks.push({
-							type: 'hosting',
-							service,
-							url,
-							text: linkText || service
-						});
+					// If no extras are found, proceed to scrape other links
+					// Corrected regex to handle all characters in the hash
+					const cryptRegex = /https?:\/\/crypt\.cybar\.xyz\/(?:link)?\#?([A-Za-z0-9_\-\+\/=]+)/gi;
+					let match;
+					while ((match = cryptRegex.exec(html)) !== null) {
+						const cryptId = match[1];
+						const cryptUrl = `https://crypt.cybar.xyz/#${cryptId}`;
+						if (!downloadLinks.some(l => l.url === cryptUrl)) {
+							downloadLinks.push({
+								type: 'crypt', service: 'Crypt', url: cryptUrl, text: 'Encrypted Link'
+							});
+						}
 					}
-				}
 
-				// Also look for torrent links
-				const torrentRegex = /<a[^>]+href=["'](magnet:[^"']*?)["'][^>]*>|<a[^>]+href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>/gi;
-				while ((match = torrentRegex.exec(html)) !== null) {
-					const url = match[1] || match[2];
-					if (url && !downloadLinks.some(l => l.url === url)) {
-						downloadLinks.push({
-							type: 'torrent',
-							url,
-							text: url.startsWith('magnet') ? 'Magnet Link': 'Torrent File'
-						});
-					}
-				}
-			}
-
-			const maxLinks = siteType === 'gamedrive' ? 20: (siteType === 'freegog' ? 20: 15);
-			return downloadLinks.slice(0, maxLinks);
-		} else if (siteType === 'skidrow') {
-			// Handle codecolorer blocks with filenames
-			const codeColorerRegex = /<div class="codecolorer-container[^>]*>[\s\S]*?<div class="text codecolorer">(.*?)<\/div>[\s\S]*?<\/div>/gi;
-			let codeMatch;
-			while ((codeMatch = codeColorerRegex.exec(html)) !== null) {
-				const filename = codeMatch[1].trim();
-				if (filename && !filename.includes('Uploading') && filename.length > 3) {
-					const beforeCode = html.substring(0, codeMatch.index);
-					const linkMatch = beforeCode.match(/<a[^>]+href=["'](.*?)["'][^>]*>[\s\S]*?$/);
-					if (linkMatch && linkMatch[1]) {
-						const url = linkMatch[1];
+					const approvedHosters = [
+						'mediafire.com',
+						'mega.nz',
+						'1fichier.com',
+						'rapidgator.net',
+						'uploaded.net',
+						'turbobit.net',
+						'nitroflare.com',
+						'katfile.com',
+						'pixeldrain.com',
+						'gofile.io',
+						'mixdrop.to',
+						'krakenfiles.com',
+						'filefactory.com',
+						'dailyuploads.net',
+						'multiup.io',
+						'drive.google.com',
+						'dropbox.com',
+						'onedrive.live.com',
+						'1337x.to'
+					];
+					const hosterRegex = new RegExp(`<a[^>]+href=["'](https?://[^"']*(?:${approvedHosters.join('|')})[^"']*)["']`, 'gi');
+					while ((match = hosterRegex.exec(html)) !== null) {
+						const url = match[1];
 						const service = extractServiceName(url);
-						if (!downloadLinks.some(link => link.url === url)) {
+
+						// Try to find a better service name in the HTML before the link
+						let serviceName = service;
+						const beforeLink = html.substring(0, match.index);
+
+						// Look for service name patterns
+						const spanPattern = /<span[^>]*>([^<]+)<\/span>\s*<br\s*\/?>\s*<a[^>]+href=/i;
+						const spanMatch = beforeLink.match(spanPattern);
+						if (spanMatch) {
+							serviceName = stripHtml(spanMatch[1]).trim();
+						}
+
+						const pPattern = /<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>\s*<a[^>]+href=/i;
+						const pMatch = beforeLink.match(pPattern);
+						if (pMatch) {
+							serviceName = stripHtml(pMatch[1]).trim();
+						}
+
+						const strongPattern = /<strong[^>]*>([^<]+)<\/strong>\s*<br\s*\/?>\s*<a[^>]+href=/i;
+						const strongMatch = beforeLink.match(strongPattern);
+						if (strongMatch) {
+							serviceName = stripHtml(strongMatch[1]).trim();
+						}
+
+						if (!downloadLinks.some(l => l.url === url)) {
 							downloadLinks.push({
 								type: 'hosting',
-								service,
-								url,
-								filename,
-								text: `${service} - ${filename}`
+								service: serviceName,
+								url: url,
+								text: serviceName
+							});
+						}
+					}
+
+					const torrentRegex = /<a[^>]+href=["'](magnet:[^"']*?)["'][^>]*>|<a[^>]+href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>/gi;
+					while ((match = torrentRegex.exec(html)) !== null) {
+						const url = match[1] || match[2];
+						if (url && !downloadLinks.some(l => l.url === url)) {
+							downloadLinks.push({
+								type: 'torrent',
+								url: url,
+								text: url.startsWith('magnet:') ? 'Magnet Link': 'Torrent File'
+							});
+						}
+					}
+				} else if (siteType === 'skidrow') {
+					// Handle codecolorer blocks with filenames
+					const codeColorerRegex = /<div class="codecolorer-container[^>]*>[\s\S]*?<div class="text codecolorer">(.*?)<\/div>[\s\S]*?<\/div>/gi;
+					let codeMatch;
+					while ((codeMatch = codeColorerRegex.exec(html)) !== null) {
+						const filename = codeMatch[1].trim();
+						if (filename && !filename.includes('Uploading') && filename.length > 3) {
+							const beforeCode = html.substring(0, codeMatch.index);
+							const linkMatch = beforeCode.match(/<a[^>]+href=["'](.*?)["'][^>]*>[\s\S]*?$/);
+							if (linkMatch && linkMatch[1]) {
+								const url = linkMatch[1];
+								const service = extractServiceName(url);
+
+								// Try to find a better service name in the HTML before the link
+								let serviceName = service;
+								const beforeLink = html.substring(0, linkMatch.index);
+
+								// Look for service name patterns
+								const spanPattern = /<span[^>]*>([^<]+)<\/span>\s*<br\s*\/?>\s*<a[^>]+href=/i;
+								const spanMatch = beforeLink.match(spanPattern);
+								if (spanMatch) {
+									serviceName = stripHtml(spanMatch[1]).trim();
+								}
+
+								const pPattern = /<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>\s*<a[^>]+href=/i;
+								const pMatch = beforeLink.match(pPattern);
+								if (pMatch) {
+									serviceName = stripHtml(pMatch[1]).trim();
+								}
+
+								const strongPattern = /<strong[^>]*>([^<]+)<\/strong>\s*<br\s*\/?>\s*<a[^>]+href=/i;
+								const strongMatch = beforeLink.match(strongPattern);
+								if (strongMatch) {
+									serviceName = stripHtml(strongMatch[1]).trim();
+								}
+
+								if (!downloadLinks.some(link => link.url === url)) {
+									downloadLinks.push({
+										type: 'hosting',
+										service: serviceName,
+										url: url,
+										filename: filename,
+										text: `${serviceName} - ${filename}`
+									});
+								}
+							}
+						}
+					}
+
+					// Also extract regular links with service names
+					const hrefRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>([^<]*)<\/a>/gi;
+					let hrefMatch;
+					while ((hrefMatch = hrefRegex.exec(html)) !== null) {
+						const url = hrefMatch[1].trim();
+						const linkText = stripHtml(hrefMatch[2]).trim();
+
+						if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
+							const service = extractServiceName(url);
+
+							// Try to find a better service name in the HTML before the link
+							let serviceName = service;
+							const beforeLink = html.substring(0, hrefMatch.index);
+
+							// Look for service name patterns
+							const spanPattern = /<span[^>]*>([^<]+)<\/span>\s*<br\s*\/?>\s*<a[^>]+href=/i;
+							const spanMatch = beforeLink.match(spanPattern);
+							if (spanMatch) {
+								serviceName = stripHtml(spanMatch[1]).trim();
+							}
+
+							const pPattern = /<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>\s*<a[^>]+href=/i;
+							const pMatch = beforeLink.match(pPattern);
+							if (pMatch) {
+								serviceName = stripHtml(pMatch[1]).trim();
+							}
+
+							const strongPattern = /<strong[^>]*>([^<]+)<\/strong>\s*<br\s*\/?>\s*<a[^>]+href=/i;
+							const strongMatch = beforeLink.match(strongPattern);
+							if (strongMatch) {
+								serviceName = stripHtml(strongMatch[1]).trim();
+							}
+
+							downloadLinks.push({
+								type: 'hosting',
+								service: serviceName,
+								url: url,
+								text: linkText || serviceName
+							});
+						}
+					}
+				} else if (siteType === 'freegog') {
+					// FreeGOG patterns
+					const downloadRegex = /<a[^>]*href=["'](https?:\/\/[^"']*(?:mediafire|mega|1fichier|rapidgator|uploaded|turbobit|nitroflare|katfile|pixeldrain|gofile|mixdrop|krakenfiles|filefactory|dailyuploads|multiup|drive\.google|dropbox|onedrive|torrents?)[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
+					let m;
+					while ((m = downloadRegex.exec(html)) !== null) {
+						const url = m[1];
+						const linkText = stripHtml(m[2]).trim();
+						const service = extractServiceName(url);
+
+						// Try to find a better service name in the HTML before the link
+						let serviceName = service;
+						const beforeLink = html.substring(0, m.index);
+
+						// Look for service name patterns
+						const spanPattern = /<span[^>]*>([^<]+)<\/span>\s*<br\s*\/?>\s*<a[^>]+href=/i;
+						const spanMatch = beforeLink.match(spanPattern);
+						if (spanMatch) {
+							serviceName = stripHtml(spanMatch[1]).trim();
+						}
+
+						const pPattern = /<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>\s*<a[^>]+href=/i;
+						const pMatch = beforeLink.match(pPattern);
+						if (pMatch) {
+							serviceName = stripHtml(pMatch[1]).trim();
+						}
+
+						const strongPattern = /<strong[^>]*>([^<]+)<\/strong>\s*<br\s*\/?>\s*<a[^>]+href=/i;
+						const strongMatch = beforeLink.match(strongPattern);
+						if (strongMatch) {
+							serviceName = stripHtml(strongMatch[1]).trim();
+						}
+
+						if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
+							downloadLinks.push({
+								type: 'hosting',
+								service: serviceName,
+								url: url,
+								text: linkText || serviceName
+							});
+						}
+					}
+
+					const fileRegex = /<a[^>]*href=["'](https?:\/\/[^"']*\.(?:exe|zip|rar|7z|iso|bin|cue|mdf|mds)[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
+					while ((m = fileRegex.exec(html)) !== null) {
+						const url = m[1];
+						const linkText = stripHtml(m[2]).trim();
+						if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
+							downloadLinks.push({
+								type: 'direct',
+								service: 'Direct Download',
+								url: url,
+								text: linkText || 'Direct Download'
+							});
+						}
+					}
+
+					const torrentRegex = /<a[^>]*href=["'](magnet:[^"']*?)["'][^>]*>([^<]*)<\/a>|<a[^>]*href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
+					while ((m = torrentRegex.exec(html)) !== null) {
+						const url = m[1] || m[3];
+						const linkText = stripHtml(m[2] || m[4]).trim();
+						if (url && !downloadLinks.some(l => l.url === url)) {
+							downloadLinks.push({
+								type: 'torrent',
+								service: url.startsWith('magnet:') ? 'Magnet': 'Torrent',
+								url: url,
+								text: linkText || (url.startsWith('magnet:') ? 'Magnet Link': 'Torrent File')
+							});
+						}
+					}
+
+					const freegogBtnRegex = /<a[^>]+class=["'][^"']*download-btn[^"']*["'][^>]+href=["'](https?:\/\/gdl\.freegogpcgames\.xyz\/[^"']+)["'][^>]*>([^<]+)<\/a>/gi;
+					let fb;
+					while ((fb = freegogBtnRegex.exec(html)) !== null) {
+						const url = fb[1];
+						const linkText = stripHtml(fb[2]).trim();
+						if (!downloadLinks.some(l => l.url === url)) {
+							downloadLinks.push({
+								type: 'direct',
+								service: 'FreeGOG',
+								url: url,
+								text: linkText || 'FreeGOG Download'
+							});
+						}
+					}
+
+					const buttonRegex = /<(?:a|button)[^>]*(?:class|id)=["'][^"']*(?:download|btn|button)[^"']*["'][^>]*href=["'](https?:\/\/[^"']+)["'][^>]*>([^<]*)<\/(?:a|button)>/gi;
+					while ((m = buttonRegex.exec(html)) !== null) {
+						const url = m[1];
+						const linkText = stripHtml(m[2]).trim();
+						const service = extractServiceName(url);
+
+						// Try to find a better service name in the HTML before the link
+						let serviceName = service;
+						const beforeLink = html.substring(0, m.index);
+
+						// Look for service name patterns
+						const spanPattern = /<span[^>]*>([^<]+)<\/span>\s*<br\s*\/?>\s*<a[^>]+href=/i;
+						const spanMatch = beforeLink.match(spanPattern);
+						if (spanMatch) {
+							serviceName = stripHtml(spanMatch[1]).trim();
+						}
+
+						const pPattern = /<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>\s*<a[^>]+href=/i;
+						const pMatch = beforeLink.match(pPattern);
+						if (pMatch) {
+							serviceName = stripHtml(pMatch[1]).trim();
+						}
+
+						const strongPattern = /<strong[^>]*>([^<]+)<\/strong>\s*<br\s*\/?>\s*<a[^>]+href=/i;
+						const strongMatch = beforeLink.match(strongPattern);
+						if (strongMatch) {
+							serviceName = stripHtml(strongMatch[1]).trim();
+						}
+
+						if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
+							downloadLinks.push({
+								type: 'hosting',
+								service: serviceName,
+								url: url,
+								text: linkText || serviceName
 							});
 						}
 					}
 				}
+
+				// Generic hosting/torrent patterns for all sites (fallback)
+				const hostingServices = [
+					'mediafire.com',
+					'mega.nz',
+					'mega.co.nz',
+					'1fichier.com',
+					'rapidgator.net',
+					'uploaded.net',
+					'turbobit.net',
+					'nitroflare.com',
+					'katfile.com',
+					'pixeldrain.com',
+					'gofile.io',
+					'mixdrop.to',
+					'krakenfiles.com',
+					'filefactory.com',
+					'dailyuploads.net',
+					'multiup.io',
+					'zippyshare.com',
+					'drive.google.com',
+					'dropbox.com',
+					'onedrive.live.com'
+				];
+				const hostingRegex = new RegExp(`<a[^>]+href=["'](https?://[^"']*(?:${hostingServices.join('|')})[^"']*?)["'][^>]*>`, 'gi');
+				let hm;
+				while ((hm = hostingRegex.exec(html)) !== null) {
+					const url = hm[1];
+					const service = extractServiceName(url);
+
+					// Try to find a better service name in the HTML before the link
+					let serviceName = service;
+					const beforeLink = html.substring(0, hm.index);
+
+					// Look for service name patterns
+					const spanPattern = /<span[^>]*>([^<]+)<\/span>\s*<br\s*\/?>\s*<a[^>]+href=/i;
+					const spanMatch = beforeLink.match(spanPattern);
+					if (spanMatch) {
+						serviceName = stripHtml(spanMatch[1]).trim();
+					}
+
+					const pPattern = /<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>\s*<a[^>]+href=/i;
+					const pMatch = beforeLink.match(pPattern);
+					if (pMatch) {
+						serviceName = stripHtml(pMatch[1]).trim();
+					}
+
+					const strongPattern = /<strong[^>]*>([^<]+)<\/strong>\s*<br\s*\/?>\s*<a[^>]+href=/i;
+					const strongMatch = beforeLink.match(strongPattern);
+					if (strongMatch) {
+						serviceName = stripHtml(strongMatch[1]).trim();
+					}
+
+					if (!downloadLinks.some(l => l.url === url)) {
+						downloadLinks.push({
+							type: 'hosting',
+							service: serviceName,
+							url: url,
+							text: serviceName
+						});
+					}
+				}
+
+				const torrentRegex = /<a[^>]+href=["'](magnet:[^"']*?)["'][^>]*>|<a[^>]+href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>/gi;
+				let tm;
+				while ((tm = torrentRegex.exec(html)) !== null) {
+					const url = tm[1] || tm[2];
+					if (url && !downloadLinks.some(l => l.url === url)) {
+						downloadLinks.push({
+							type: 'torrent',
+							url: url,
+							text: url.startsWith('magnet:') ? 'Magnet Link': 'Torrent File'
+						});
+					}
+				}
 			}
-		} else if (siteType === 'freegog') {
-			// FreeGOG patterns
-			const downloadRegex = /<a[^>]*href=["'](https?:\/\/[^"']*(?:mediafire|mega|1fichier|rapidgator|uploaded|turbobit|nitroflare|katfile|pixeldrain|gofile|mixdrop|krakenfiles|filefactory|dailyuploads|multiup|drive\.google|dropbox|onedrive|torrents?)[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
-			let m;
-			while ((m = downloadRegex.exec(html)) !== null) {
-				const url = m[1];
-				const linkText = stripHtml(m[2]).trim();
-				const service = extractServiceName(url);
-				if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
+
+			// Special handling for FileCrypt links (for all sites)
+			const filecryptRegex = /https?:\/\/filecrypt\.co\/(?:Container\/|Link\/)([A-Z0-9]+)/gi;
+			let filecryptMatch;
+			while ((filecryptMatch = filecryptRegex.exec(html)) !== null) {
+				const filecryptId = filecryptMatch[1];
+				const filecryptUrl = filecryptMatch[0];
+				if (!downloadLinks.some(l => l.url === filecryptUrl)) {
 					downloadLinks.push({
-						type: 'hosting', service, url, text: linkText || service
+						type: 'filecrypt',
+						service: 'FileCrypt',
+						url: filecryptUrl,
+						text: 'FileCrypt (Requires CAPTCHA)',
+						id: filecryptId,
+						requiresCaptcha: true
 					});
 				}
 			}
 
-			const fileRegex = /<a[^>]*href=["'](https?:\/\/[^"']*\.(?:exe|zip|rar|7z|iso|bin|cue|mdf|mds)[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
-			while ((m = fileRegex.exec(html)) !== null) {
-				const url = m[1];
-				const linkText = stripHtml(m[2]).trim();
-				if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
-					downloadLinks.push({
-						type: 'direct', service: 'Direct Download', url, text: linkText || 'Direct Download'
-					});
-				}
-			}
+			// Apply limits based on site type
+			const maxLinks = siteType === 'gamedrive' ? 20: (siteType === 'freegog' ? 20: 15);
+			return downloadLinks.slice(0, maxLinks);
 
-			const torrentRegex = /<a[^>]*href=["'](magnet:[^"']*?)["'][^>]*>([^<]*)<\/a>|<a[^>]*href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
-			while ((m = torrentRegex.exec(html)) !== null) {
-				const url = m[1] || m[3];
-				const linkText = stripHtml(m[2] || m[4]).trim();
-				if (url && !downloadLinks.some(l => l.url === url)) {
-					downloadLinks.push({
-						type: 'torrent', service: url.startsWith('magnet:') ? 'Magnet': 'Torrent', url, text: linkText || (url.startsWith('magnet:') ? 'Magnet Link': 'Torrent File')
-					});
-				}
-			}
-
-			const freegogBtnRegex = /<a[^>]+class=["'][^"']*download-btn[^"']*["'][^>]+href=["'](https?:\/\/gdl\.freegogpcgames\.xyz\/[^"']+)["'][^>]*>([^<]+)<\/a>/gi;
-			let fb;
-			while ((fb = freegogBtnRegex.exec(html)) !== null) {
-				const url = fb[1];
-				const linkText = stripHtml(fb[2]).trim();
-				if (!downloadLinks.some(l => l.url === url)) {
-					downloadLinks.push({
-						type: 'direct',
-						service: 'FreeGOG',
-						url,
-						text: linkText || 'FreeGOG Download'
-					});
-				}
-			}
-
-			const buttonRegex = /<(?:a|button)[^>]*(?:class|id)=["'][^"']*(?:download|btn|button)[^"']*["'][^>]*href=["'](https?:\/\/[^"']+)["'][^>]*>([^<]*)<\/(?:a|button)>/gi;
-			while ((m = buttonRegex.exec(html)) !== null) {
-				const url = m[1];
-				const linkText = stripHtml(m[2]).trim();
-				const service = extractServiceName(url);
-				if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
-					downloadLinks.push({
-						type: 'hosting', service, url, text: linkText || service
-					});
-				}
-			}
+		} catch (err) {
+			console.error(`Error extracting download links from ${postUrl}:`, err);
+			return [];
 		}
-
-		// Generic hosting/torrent patterns for all sites (skidrow/freegog)
-		const hostingServices = [
-			'mediafire.com',
-			'mega.nz',
-			'mega.co.nz',
-			'1fichier.com',
-			'rapidgator.net',
-			'uploaded.net',
-			'turbobit.net',
-			'nitroflare.com',
-			'katfile.com',
-			'pixeldrain.com',
-			'gofile.io',
-			'mixdrop.to',
-			'krakenfiles.com',
-			'filefactory.com',
-			'dailyuploads.net',
-			'multiup.io',
-			'zippyshare.com',
-			'drive.google.com',
-			'dropbox.com',
-			'onedrive.live.com'
-		];
-		const hostingRegex = new RegExp(`<a[^>]+href=["'](https?://[^"']*(?:${hostingServices.join('|')})[^"']*?)["'][^>]*>`, 'gi');
-		let hm;
-		while ((hm = hostingRegex.exec(html)) !== null) {
-			const url = hm[1];
-			const service = extractServiceName(url);
-			if (!downloadLinks.some(l => l.url === url)) {
-				downloadLinks.push({
-					type: 'hosting', service, url, text: service
-				});
-			}
-		}
-
-		const torrentRegex = /<a[^>]+href=["'](magnet:[^"']*?)["'][^>]*>|<a[^>]+href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>/gi;
-		let tm;
-		while ((tm = torrentRegex.exec(html)) !== null) {
-			const url = tm[1] || tm[2];
-			if (url && !downloadLinks.some(l => l.url === url)) {
-				downloadLinks.push({
-					type: 'torrent', url, text: url.startsWith('magnet:') ? 'Magnet Link': 'Torrent File'
-				});
-			}
-		}
-
-		const maxLinks = siteType === 'gamedrive' ? 20: (siteType === 'freegog' ? 20: 15);
-		return downloadLinks.slice(0, maxLinks);
-
-	} catch (err) {
-		console.error(`Error extracting download links from ${postUrl}:`, err);
-		return [];
 	}
-}
