@@ -74,8 +74,8 @@ export default {
 		RECENT_UPLOADS_KEY: 'recent-uploads-complete',
 	};
 
-	// Maximum posts to fetch per site to prevent timeouts
-	const MAX_POSTS_PER_SITE = 10;
+	// Maximum posts to fetch per site - set to high value to get all available posts
+	const MAX_POSTS_PER_SITE = 100;
 
 	// Global variable to store the SteamRip cookie (in a real implementation, you might want to use KV storage)
 	let steamripCookie = {
@@ -129,6 +129,9 @@ export default {
 			if (host.includes('datanodes')) return 'DataNodes';
 			if (host.includes('filecrypt')) return 'FileCrypt';
 			if (host.includes('megadb')) return 'MegaDB'; // Added for MegaDB links
+			if (host.includes('hitfile')) return 'HitFile';
+			if (host.includes('ufile')) return 'UFile';
+			if (host.includes('clicknupload')) return 'ClicknUpload';
 			return host;
 		} catch {
 			// If URL parsing fails, try a simple string check
@@ -136,8 +139,96 @@ export default {
 			if (url.includes('buzzheavier')) return 'BuzzHeavier';
 			if (url.includes('datanodes')) return 'DataNodes';
 			if (url.includes('filecrypt')) return 'FileCrypt';
+			if (url.includes('hitfile')) return 'HitFile';
+			if (url.includes('ufile')) return 'UFile';
+			if (url.includes('clicknupload')) return 'ClicknUpload';
 			return 'Unknown';
 		}
+	}
+
+	// Enhanced torrent link detection and classification
+	function classifyTorrentLink(url, linkText = '') {
+		const cleanText = stripHtml(linkText).trim();
+		
+		if (url.startsWith('magnet:')) {
+			// Extract tracker info from magnet links
+			const trackerMatch = url.match(/tr=([^&]+)/);
+			let trackerInfo = 'Magnet Link';
+			
+			if (trackerMatch) {
+				const tracker = decodeURIComponent(trackerMatch[1]);
+				if (tracker.includes('1337x')) trackerInfo = 'Magnet Link (1337x)';
+				else if (tracker.includes('rarbg')) trackerInfo = 'Magnet Link (RARBG)';
+				else if (tracker.includes('piratebay')) trackerInfo = 'Magnet Link (PirateBay)';
+				else if (tracker.includes('kickass')) trackerInfo = 'Magnet Link (KickAss)';
+				else if (tracker.includes('torrentgalaxy')) trackerInfo = 'Magnet Link (TorrentGalaxy)';
+			}
+			
+			// Use meaningful link text if available
+			if (cleanText && cleanText.length > 0 && !cleanText.toLowerCase().includes('click') && !cleanText.toLowerCase().includes('here')) {
+				return {
+					type: 'torrent',
+					service: 'Magnet',
+					url: url,
+					text: cleanText,
+					torrentInfo: trackerInfo
+				};
+			}
+			
+			return {
+				type: 'torrent',
+				service: 'Magnet',
+				url: url,
+				text: trackerInfo,
+				torrentInfo: trackerInfo
+			};
+		}
+		
+		if (url.includes('.torrent')) {
+			const hostname = extractServiceName(url);
+			let torrentType = 'Torrent File';
+			
+			// Classify by host
+			if (hostname.includes('1337x')) torrentType = 'Torrent File (1337x)';
+			else if (hostname.includes('rarbg')) torrentType = 'Torrent File (RARBG)';
+			else if (hostname.includes('piratebay')) torrentType = 'Torrent File (PirateBay)';
+			else if (hostname.includes('kickass')) torrentType = 'Torrent File (KickAss)';
+			else if (hostname.includes('torrentgalaxy')) torrentType = 'Torrent File (TorrentGalaxy)';
+			else if (hostname !== url) torrentType = `Torrent File (${hostname})`;
+			
+			// Use meaningful link text if available
+			if (cleanText && cleanText.length > 0 && !cleanText.toLowerCase().includes('click') && !cleanText.toLowerCase().includes('here')) {
+				return {
+					type: 'torrent',
+					service: 'Torrent',
+					url: url,
+					text: cleanText,
+					torrentInfo: torrentType
+				};
+			}
+			
+			return {
+				type: 'torrent',
+				service: 'Torrent',
+				url: url,
+				text: torrentType,
+				torrentInfo: torrentType
+			};
+		}
+		
+		// Fallback for torrent-related URLs
+		const hostname = extractServiceName(url);
+		if (hostname.toLowerCase().includes('torrent')) {
+			return {
+				type: 'torrent',
+				service: hostname,
+				url: url,
+				text: cleanText || hostname,
+				torrentInfo: `Torrent (${hostname})`
+			};
+		}
+		
+		return null;
 	}
 
 	function extractDescription(content) {
@@ -676,18 +767,16 @@ export default {
 				order: 'desc'
 			});
 
-			// For GameDrive, include categories filter
-			if (site.type === 'gamedrive') {
-				params.set('categories', '3');
-			}
+		// For GameDrive, include categories filter
+		if (site.type === 'gamedrive') {
+			params.set('categories', '3');
+		}
 
-			// Only add per_page and page for sites that aren't FreeGOG or SteamRip
-			if (site.type !== 'freegog' && site.type !== 'steamrip') {
-				params.set('per_page', MAX_POSTS_PER_SITE.toString());
-				params.set('page', '1');
-			}
+		// Set per_page and page for all sites to fetch maximum available posts
+		params.set('per_page', MAX_POSTS_PER_SITE.toString());
+		params.set('page', '1');
 
-			const url = `${site.baseUrl}?${params}`;
+		const url = `${site.baseUrl}?${params}`;
 			console.log(`Fetching recent uploads from ${site.name}: ${url}`);
 
 			let response;
@@ -740,33 +829,29 @@ export default {
 				order: 'desc'
 			});
 
-			// For GameDrive, include categories filter
-			if (site.type === 'gamedrive') {
-				params.set('categories', '3');
-			}
+		// For GameDrive, include categories filter
+		if (site.type === 'gamedrive') {
+			params.set('categories', '3');
+		}
 
-			// Only add per_page for sites that aren't FreeGOG or SteamRip
-			if (site.type !== 'freegog' && site.type !== 'steamrip') {
-				params.set('per_page', MAX_POSTS_PER_SITE.toString());
-			}
+		// Set per_page for all sites to fetch maximum available posts
+		params.set('per_page', MAX_POSTS_PER_SITE.toString());
 
-			const url = `${site.baseUrl}?${params}`;
+		const url = `${site.baseUrl}?${params}`;
 			console.log(`Fetching from ${site.name}: ${url}`);
 
-			let response;
-			if (site.type === 'steamrip') {
-				// Use our new helper function to make authenticated requests
-				response = await fetchSteamripAPI(url);
-			} else {
-				// Normal fetch for other sites
-				response = await fetch(url, {
-					headers: {
-						'User-Agent': 'Cloudflare-Workers-Search-API/2.0'
-					}
-				});
-			}
-
-			if (!response.ok) {
+		let response;
+		if (site.type === 'steamrip') {
+			// Use our helper function to make authenticated requests
+			response = await fetchSteamrip(url);
+		} else {
+			// Normal fetch for other sites
+			response = await fetch(url, {
+				headers: {
+					'User-Agent': 'Cloudflare-Workers-Search-API/2.0'
+				}
+			});
+		}			if (!response.ok) {
 				throw new Error(`${site.name} API returned ${response.status}: ${response.statusText}`);
 			}
 
@@ -986,7 +1071,11 @@ export default {
 			'buzzheavier.com': 'BuzzHeavier',
 			'datanodes.to': 'DataNodes',
 			'filecrypt.co': 'FileCrypt',
-			'megadb.net': 'MegaDB' // Added for MegaDB links
+			'megadb.net': 'MegaDB',
+			// Additional requested hosters
+			'hitfile.net': 'HitFile',
+			'ufile.io': 'UFile',
+			'clicknupload.site': 'ClicknUpload'
 		};
 
 		try {
@@ -1003,6 +1092,32 @@ export default {
 		} catch (e) {
 			// If URL parsing fails, try a simple string check
 			return Object.keys(hostingServices).some(domain => url.includes(domain));
+		}
+	}
+
+	// Function to detect torrent-related URLs
+	function isValidTorrentUrl(url) {
+		if (url.startsWith('magnet:')) return true;
+		if (url.includes('.torrent')) return true;
+		
+		// Check for known torrent sites
+		const torrentSites = [
+			'1337x.to',
+			'thepiratebay.org',
+			'rarbg.to',
+			'kickasstorrents.to',
+			'torrentgalaxy.to',
+			'torrent.cybar.xyz',
+			'eztv.re',
+			'yts.mx',
+			'torrentz2.eu'
+		];
+		
+		try {
+			const hostname = new URL(url).hostname.toLowerCase();
+			return torrentSites.some(site => hostname.includes(site));
+		} catch {
+			return torrentSites.some(site => url.includes(site));
 		}
 	}
 
@@ -1253,48 +1368,24 @@ export default {
 					if (isValidDownloadUrl(url)) {
 						const service = extractServiceName(url);
 
-						// Try to find the service name in the HTML before the link
-						let serviceName = service; // Default to extracted service name
-						const beforeLink = html.substring(0, match.index);
-
-						// Look for service name patterns in the HTML before the link
-						// Pattern 1: Service name in a span before the link
-						const spanPattern = /<span[^>]*>([^<]+)<\/span>\s*<br\s*\/?>\s*<a[^>]+href=/i;
-						const spanMatch = beforeLink.match(spanPattern);
-						if (spanMatch) {
-							serviceName = stripHtml(spanMatch[1]).trim();
-						}
-
-						// Pattern 2: Service name in a paragraph before the link
-						const pPattern = /<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>\s*<a[^>]+href=/i;
-						const pMatch = beforeLink.match(pPattern);
-						if (pMatch) {
-							serviceName = stripHtml(pMatch[1]).trim();
-						}
-
-						// Pattern 3: Service name in a strong tag before the link
-						const strongPattern = /<strong[^>]*>([^<]+)<\/strong>\s*<br\s*\/?>\s*<a[^>]+href=/i;
-						const strongMatch = beforeLink.match(strongPattern);
-						if (strongMatch) {
-							serviceName = stripHtml(strongMatch[1]).trim();
-						}
+						// Use the reliable hostname-based service name instead of HTML parsing
+						const serviceName = service;
 
 						// Add to our download links list
 						downloadLinks.push({
 							type: 'hosting',
 							service: serviceName,
 							url: url,
-							text: linkText || serviceName
+							text: serviceName // Use service name as display text for consistency
 						});
 					}
 
 					// Also check for torrent links
 					if (url.startsWith('magnet:') || url.includes('.torrent')) {
-						downloadLinks.push({
-							type: 'torrent',
-							url: url,
-							text: url.startsWith('magnet:') ? 'Magnet Link': 'Torrent File'
-						});
+						const torrentData = classifyTorrentLink(url, linkText);
+						if (torrentData && !downloadLinks.some(l => l.url === url)) {
+							downloadLinks.push(torrentData);
+						}
 					}
 				}
 			} else {
@@ -1358,6 +1449,9 @@ export default {
 						'drive.google.com',
 						'dropbox.com',
 						'onedrive.live.com',
+						'hitfile.net',
+						'ufile.io',
+						'clicknupload.site',
 						'1337x.to'
 					];
 					const hosterRegex = new RegExp(`<a[^>]+href=["'](https?://[^"']*(?:${approvedHosters.join('|')})[^"']*)["']`, 'gi');
@@ -1365,28 +1459,8 @@ export default {
 						const url = match[1];
 						const service = extractServiceName(url);
 
-						// Try to find a better service name in the HTML before the link
-						let serviceName = service;
-						const beforeLink = html.substring(0, match.index);
-
-						// Look for service name patterns
-						const spanPattern = /<span[^>]*>([^<]+)<\/span>\s*<br\s*\/?>\s*<a[^>]+href=/i;
-						const spanMatch = beforeLink.match(spanPattern);
-						if (spanMatch) {
-							serviceName = stripHtml(spanMatch[1]).trim();
-						}
-
-						const pPattern = /<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>\s*<a[^>]+href=/i;
-						const pMatch = beforeLink.match(pPattern);
-						if (pMatch) {
-							serviceName = stripHtml(pMatch[1]).trim();
-						}
-
-						const strongPattern = /<strong[^>]*>([^<]+)<\/strong>\s*<br\s*\/?>\s*<a[^>]+href=/i;
-						const strongMatch = beforeLink.match(strongPattern);
-						if (strongMatch) {
-							serviceName = stripHtml(strongMatch[1]).trim();
-						}
+						// Use reliable hostname-based service name
+						const serviceName = service;
 
 						if (!downloadLinks.some(l => l.url === url)) {
 							downloadLinks.push({
@@ -1398,15 +1472,15 @@ export default {
 						}
 					}
 
-					const torrentRegex = /<a[^>]+href=["'](magnet:[^"']*?)["'][^>]*>|<a[^>]+href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>/gi;
+					const torrentRegex = /<a[^>]+href=["'](magnet:[^"']*?)["'][^>]*>([^<]*)<\/a>|<a[^>]+href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
 					while ((match = torrentRegex.exec(html)) !== null) {
-						const url = match[1] || match[2];
+						const url = match[1] || match[3];
+						const linkText = stripHtml(match[2] || match[4]).trim();
 						if (url && !downloadLinks.some(l => l.url === url)) {
-							downloadLinks.push({
-								type: 'torrent',
-								url: url,
-								text: url.startsWith('magnet:') ? 'Magnet Link': 'Torrent File'
-							});
+							const torrentData = classifyTorrentLink(url, linkText);
+							if (torrentData) {
+								downloadLinks.push(torrentData);
+							}
 						}
 					}
 				} else if (siteType === 'skidrow') {
@@ -1420,39 +1494,23 @@ export default {
 							const linkMatch = beforeCode.match(/<a[^>]+href=["'](.*?)["'][^>]*>[\s\S]*?$/);
 							if (linkMatch && linkMatch[1]) {
 								const url = linkMatch[1];
-								const service = extractServiceName(url);
+								
+								// Only add valid download URLs (exclude source site URLs)
+								if (isValidDownloadUrl(url)) {
+									const service = extractServiceName(url);
 
-								// Try to find a better service name in the HTML before the link
-								let serviceName = service;
-								const beforeLink = html.substring(0, linkMatch.index);
+									// Use reliable hostname-based service name
+									const serviceName = service;
 
-								// Look for service name patterns
-								const spanPattern = /<span[^>]*>([^<]+)<\/span>\s*<br\s*\/?>\s*<a[^>]+href=/i;
-								const spanMatch = beforeLink.match(spanPattern);
-								if (spanMatch) {
-									serviceName = stripHtml(spanMatch[1]).trim();
-								}
-
-								const pPattern = /<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>\s*<a[^>]+href=/i;
-								const pMatch = beforeLink.match(pPattern);
-								if (pMatch) {
-									serviceName = stripHtml(pMatch[1]).trim();
-								}
-
-								const strongPattern = /<strong[^>]*>([^<]+)<\/strong>\s*<br\s*\/?>\s*<a[^>]+href=/i;
-								const strongMatch = beforeLink.match(strongPattern);
-								if (strongMatch) {
-									serviceName = stripHtml(strongMatch[1]).trim();
-								}
-
-								if (!downloadLinks.some(link => link.url === url)) {
-									downloadLinks.push({
-										type: 'hosting',
-										service: serviceName,
-										url: url,
-										filename: filename,
-										text: `${serviceName} - ${filename}`
-									});
+									if (!downloadLinks.some(link => link.url === url)) {
+										downloadLinks.push({
+											type: 'hosting',
+											service: serviceName,
+											url: url,
+											filename: filename,
+											text: `${serviceName} - ${filename}`
+										});
+									}
 								}
 							}
 						}
@@ -1468,75 +1526,43 @@ export default {
 						if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
 							const service = extractServiceName(url);
 
-							// Try to find a better service name in the HTML before the link
-							let serviceName = service;
-							const beforeLink = html.substring(0, hrefMatch.index);
-
-							// Look for service name patterns
-							const spanPattern = /<span[^>]*>([^<]+)<\/span>\s*<br\s*\/?>\s*<a[^>]+href=/i;
-							const spanMatch = beforeLink.match(spanPattern);
-							if (spanMatch) {
-								serviceName = stripHtml(spanMatch[1]).trim();
-							}
-
-							const pPattern = /<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>\s*<a[^>]+href=/i;
-							const pMatch = beforeLink.match(pPattern);
-							if (pMatch) {
-								serviceName = stripHtml(pMatch[1]).trim();
-							}
-
-							const strongPattern = /<strong[^>]*>([^<]+)<\/strong>\s*<br\s*\/?>\s*<a[^>]+href=/i;
-							const strongMatch = beforeLink.match(strongPattern);
-							if (strongMatch) {
-								serviceName = stripHtml(strongMatch[1]).trim();
-							}
+							// Use reliable hostname-based service name
+							const serviceName = service;
 
 							downloadLinks.push({
 								type: 'hosting',
 								service: serviceName,
 								url: url,
-								text: linkText || serviceName
+								text: serviceName // Use service name for consistency
 							});
+						}
+
+						// Also check for torrent links
+						if (isValidTorrentUrl(url) && !downloadLinks.some(l => l.url === url)) {
+							const torrentData = classifyTorrentLink(url, linkText);
+							if (torrentData) {
+								downloadLinks.push(torrentData);
+							}
 						}
 					}
 				} else if (siteType === 'freegog') {
 					// FreeGOG patterns
-					const downloadRegex = /<a[^>]*href=["'](https?:\/\/[^"']*(?:mediafire|mega|1fichier|rapidgator|uploaded|turbobit|nitroflare|katfile|pixeldrain|gofile|mixdrop|krakenfiles|filefactory|dailyuploads|multiup|drive\.google|dropbox|onedrive|torrents?)[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
+					const downloadRegex = /<a[^>]*href=["'](https?:\/\/[^"']*(?:mediafire|mega|1fichier|rapidgator|uploaded|turbobit|nitroflare|katfile|pixeldrain|gofile|mixdrop|krakenfiles|filefactory|dailyuploads|multiup|drive\.google|dropbox|onedrive|hitfile|ufile|clicknupload|torrents?)[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
 					let m;
 					while ((m = downloadRegex.exec(html)) !== null) {
 						const url = m[1];
 						const linkText = stripHtml(m[2]).trim();
 						const service = extractServiceName(url);
 
-						// Try to find a better service name in the HTML before the link
-						let serviceName = service;
-						const beforeLink = html.substring(0, m.index);
-
-						// Look for service name patterns
-						const spanPattern = /<span[^>]*>([^<]+)<\/span>\s*<br\s*\/?>\s*<a[^>]+href=/i;
-						const spanMatch = beforeLink.match(spanPattern);
-						if (spanMatch) {
-							serviceName = stripHtml(spanMatch[1]).trim();
-						}
-
-						const pPattern = /<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>\s*<a[^>]+href=/i;
-						const pMatch = beforeLink.match(pPattern);
-						if (pMatch) {
-							serviceName = stripHtml(pMatch[1]).trim();
-						}
-
-						const strongPattern = /<strong[^>]*>([^<]+)<\/strong>\s*<br\s*\/?>\s*<a[^>]+href=/i;
-						const strongMatch = beforeLink.match(strongPattern);
-						if (strongMatch) {
-							serviceName = stripHtml(strongMatch[1]).trim();
-						}
+						// Use reliable hostname-based service name
+						const serviceName = service;
 
 						if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
 							downloadLinks.push({
 								type: 'hosting',
 								service: serviceName,
 								url: url,
-								text: linkText || serviceName
+								text: serviceName // Use service name for consistency
 							});
 						}
 					}
@@ -1560,12 +1586,10 @@ export default {
 						const url = m[1] || m[3];
 						const linkText = stripHtml(m[2] || m[4]).trim();
 						if (url && !downloadLinks.some(l => l.url === url)) {
-							downloadLinks.push({
-								type: 'torrent',
-								service: url.startsWith('magnet:') ? 'Magnet': 'Torrent',
-								url: url,
-								text: linkText || (url.startsWith('magnet:') ? 'Magnet Link': 'Torrent File')
-							});
+							const torrentData = classifyTorrentLink(url, linkText);
+							if (torrentData) {
+								downloadLinks.push(torrentData);
+							}
 						}
 					}
 
@@ -1590,35 +1614,15 @@ export default {
 						const linkText = stripHtml(m[2]).trim();
 						const service = extractServiceName(url);
 
-						// Try to find a better service name in the HTML before the link
-						let serviceName = service;
-						const beforeLink = html.substring(0, m.index);
-
-						// Look for service name patterns
-						const spanPattern = /<span[^>]*>([^<]+)<\/span>\s*<br\s*\/?>\s*<a[^>]+href=/i;
-						const spanMatch = beforeLink.match(spanPattern);
-						if (spanMatch) {
-							serviceName = stripHtml(spanMatch[1]).trim();
-						}
-
-						const pPattern = /<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>\s*<a[^>]+href=/i;
-						const pMatch = beforeLink.match(pPattern);
-						if (pMatch) {
-							serviceName = stripHtml(pMatch[1]).trim();
-						}
-
-						const strongPattern = /<strong[^>]*>([^<]+)<\/strong>\s*<br\s*\/?>\s*<a[^>]+href=/i;
-						const strongMatch = beforeLink.match(strongPattern);
-						if (strongMatch) {
-							serviceName = stripHtml(strongMatch[1]).trim();
-						}
+						// Use reliable hostname-based service name
+						const serviceName = service;
 
 						if (isValidDownloadUrl(url) && !downloadLinks.some(l => l.url === url)) {
 							downloadLinks.push({
 								type: 'hosting',
 								service: serviceName,
 								url: url,
-								text: linkText || serviceName
+								text: serviceName // Use service name for consistency
 							});
 						}
 					}
@@ -1645,7 +1649,10 @@ export default {
 					'zippyshare.com',
 					'drive.google.com',
 					'dropbox.com',
-					'onedrive.live.com'
+					'onedrive.live.com',
+					'hitfile.net',
+					'ufile.io',
+					'clicknupload.site'
 				];
 				const hostingRegex = new RegExp(`<a[^>]+href=["'](https?://[^"']*(?:${hostingServices.join('|')})[^"']*?)["'][^>]*>`, 'gi');
 				let hm;
@@ -1653,28 +1660,8 @@ export default {
 					const url = hm[1];
 					const service = extractServiceName(url);
 
-					// Try to find a better service name in the HTML before the link
-					let serviceName = service;
-					const beforeLink = html.substring(0, hm.index);
-
-					// Look for service name patterns
-					const spanPattern = /<span[^>]*>([^<]+)<\/span>\s*<br\s*\/?>\s*<a[^>]+href=/i;
-					const spanMatch = beforeLink.match(spanPattern);
-					if (spanMatch) {
-						serviceName = stripHtml(spanMatch[1]).trim();
-					}
-
-					const pPattern = /<p[^>]*>([^<]+)<\/p>\s*<p[^>]*>\s*<a[^>]+href=/i;
-					const pMatch = beforeLink.match(pPattern);
-					if (pMatch) {
-						serviceName = stripHtml(pMatch[1]).trim();
-					}
-
-					const strongPattern = /<strong[^>]*>([^<]+)<\/strong>\s*<br\s*\/?>\s*<a[^>]+href=/i;
-					const strongMatch = beforeLink.match(strongPattern);
-					if (strongMatch) {
-						serviceName = stripHtml(strongMatch[1]).trim();
-					}
+					// Use reliable hostname-based service name
+					const serviceName = service;
 
 					if (!downloadLinks.some(l => l.url === url)) {
 						downloadLinks.push({
@@ -1686,16 +1673,16 @@ export default {
 					}
 				}
 
-				const torrentRegex = /<a[^>]+href=["'](magnet:[^"']*?)["'][^>]*>|<a[^>]+href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>/gi;
+				const torrentRegex = /<a[^>]+href=["'](magnet:[^"']*?)["'][^>]*>([^<]*)<\/a>|<a[^>]+href=["'](https?:\/\/[^"']*\.torrent[^"']*?)["'][^>]*>([^<]*)<\/a>/gi;
 				let tm;
 				while ((tm = torrentRegex.exec(html)) !== null) {
-					const url = tm[1] || tm[2];
+					const url = tm[1] || tm[3];
+					const linkText = stripHtml(tm[2] || tm[4]).trim();
 					if (url && !downloadLinks.some(l => l.url === url)) {
-						downloadLinks.push({
-							type: 'torrent',
-							url: url,
-							text: url.startsWith('magnet:') ? 'Magnet Link': 'Torrent File'
-						});
+						const torrentData = classifyTorrentLink(url, linkText);
+						if (torrentData) {
+							downloadLinks.push(torrentData);
+						}
 					}
 				}
 			}
