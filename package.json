@@ -5,7 +5,8 @@
   "main": "worker.js",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "build": "echo 'No build step required for this worker'"
   },
   "keywords": [
     "cloudflare-workers",
@@ -17,5 +18,8 @@
   "license": "MIT",
   "devDependencies": {
     "wrangler": "^4.38.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
