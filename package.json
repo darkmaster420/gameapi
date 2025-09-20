@@ -1,0 +1,21 @@
+{
+  "name": "gamesearch-api",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker API for searching game downloads",
+  "main": "worker.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "keywords": [
+    "cloudflare-workers",
+    "api",
+    "games",
+    "download"
+  ],
+  "author": "darkmaster420",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^4.38.0"
+  }
+}
