@@ -42,6 +42,11 @@ export default {
 			return await handleRecentUploadsComplete(request, corsHeaders, ctx);
 		}
 
+		// Handle post details endpoint (fetch specific post with download links)
+		if (url.pathname === '/post') {
+			return await handlePostDetails(request, corsHeaders, ctx);
+		}
+
 		// Handles decryption endpoint
 		if (url.pathname === '/decrypt') {
 			const hash = url.searchParams.get('hash');
@@ -86,6 +91,33 @@ export default {
 	// Helper functions for common tasks
 	function stripHtml(html) {
 		return (html || '').replace(/<[^>]*>?/gm, '');
+	}
+
+	// Helper function to get site configuration
+	function getSiteConfig(siteType) {
+		const siteConfigs = {
+			'skidrow': {
+				baseUrl: 'https://www.skidrowreloaded.com/wp-json/wp/v2/posts',
+				type: 'skidrow',
+				name: 'SkidrowReloaded'
+			},
+			'freegog': {
+				baseUrl: 'https://freegogpcgames.com/wp-json/wp/v2/posts',
+				type: 'freegog',
+				name: 'FreeGOGPCGames'
+			},
+			'gamedrive': {
+				baseUrl: 'https://gamedrive.org/wp-json/wp/v2/posts',
+				type: 'gamedrive',
+				name: 'GameDrive'
+			},
+			'steamrip': {
+				baseUrl: 'https://steamrip.com/wp-json/wp/v2/posts',
+				type: 'steamrip',
+				name: 'SteamRip'
+			}
+		};
+		return siteConfigs[siteType] || null;
 	}
 
 	// Updated extractServiceName function
@@ -463,6 +495,102 @@ export default {
 			return new Response(JSON.stringify({
 				success: false,
 				error: `Failed to clear cache: ${error.message}`
+			}), {
+				status: 500,
+				headers: {
+					...corsHeaders,
+					'Content-Type': 'application/json'
+				}
+			});
+		}
+	}
+
+	async function handlePostDetails(request, corsHeaders, ctx) {
+		const url = new URL(request.url);
+		const postId = url.searchParams.get('id');
+		const site = url.searchParams.get('site');
+
+		if (!postId) {
+			return new Response(JSON.stringify({
+				success: false,
+				error: 'Missing post ID parameter'
+			}), {
+				status: 400,
+				headers: {
+					...corsHeaders,
+					'Content-Type': 'application/json'
+				}
+			});
+		}
+
+		if (!site) {
+			return new Response(JSON.stringify({
+				success: false,
+				error: 'Missing site parameter (skidrow, freegog, gamedrive, steamrip)'
+			}), {
+				status: 400,
+				headers: {
+					...corsHeaders,
+					'Content-Type': 'application/json'
+				}
+			});
+		}
+
+		try {
+			const siteConfig = getSiteConfig(site);
+			if (!siteConfig) {
+				return new Response(JSON.stringify({
+					success: false,
+					error: `Invalid site parameter. Valid options: skidrow, freegog, gamedrive, steamrip`
+				}), {
+					status: 400,
+					headers: {
+						...corsHeaders,
+						'Content-Type': 'application/json'
+					}
+				});
+			}
+
+			// Fetch the specific post
+			const postUrl = `${siteConfig.baseUrl}/${postId}`;
+			console.log(`Fetching post details from: ${postUrl}`);
+
+			let response;
+			if (siteConfig.type === 'steamrip') {
+				response = await fetchSteamrip(postUrl);
+			} else {
+				response = await fetch(postUrl, {
+					headers: {
+						'User-Agent': 'Cloudflare-Workers-Search-API/2.0'
+					}
+				});
+			}
+
+			if (!response.ok) {
+				throw new Error(`${siteConfig.name} API returned ${response.status}: ${response.statusText}`);
+			}
+
+			const post = await response.json();
+			
+			// Transform the post with download links enabled
+			const transformedPost = await transformPost(post, siteConfig, true);
+
+			return new Response(JSON.stringify({
+				success: true,
+				post: transformedPost,
+				cached: false
+			}), {
+				headers: {
+					...corsHeaders,
+					'Content-Type': 'application/json'
+				}
+			});
+
+		} catch (error) {
+			console.error('Error fetching post details:', error);
+			return new Response(JSON.stringify({
+				success: false,
+				error: error.message
 			}), {
 				status: 500,
 				headers: {
@@ -1422,7 +1550,7 @@ export default {
 					let match;
 					while ((match = cryptRegex.exec(html)) !== null) {
 						const cryptId = match[1];
-						const cryptUrl = `https://crypt.cybar.xyz/#${cryptId}`;
+						const cryptUrl = `https://crypt.cybar.xyz/link#${cryptId}`;
 						if (!downloadLinks.some(l => l.url === cryptUrl)) {
 							downloadLinks.push({
 								type: 'crypt', service: 'Crypt', url: cryptUrl, text: 'Encrypted Link'
