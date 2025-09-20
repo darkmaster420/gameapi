@@ -1,4 +1,6 @@
 export default {
+	// Cloudflare Worker - Game Search API
+	// Auto-deployed via GitHub integration
 	async fetch(request, env, ctx) {
 		const url = new URL(request.url);
 
