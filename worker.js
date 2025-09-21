@@ -576,7 +576,8 @@ export default {
 			const post = await response.json();
 			
 			// Transform the post with download links enabled
-			const transformedPost = await transformPost(post, siteConfig, true);
+			const workerUrl = `${url.protocol}//${url.host}`;
+			const transformedPost = await transformPost(post, siteConfig, true, workerUrl);
 
 			return new Response(JSON.stringify({
 				success: true,
@@ -706,7 +707,7 @@ export default {
 				}
 			}
 
-			const freshData = await fetchAllSearchResults(searchQuery, siteParam);
+			const freshData = await fetchAllSearchResults(searchQuery, siteParam, `${url.protocol}//${url.host}`);
 
 			const cacheResponse = new Response(JSON.stringify(freshData), {
 				headers: {
@@ -800,7 +801,7 @@ export default {
 		};
 	}
 
-	async function fetchAllSearchResults(searchQuery, siteParam) {
+	async function fetchAllSearchResults(searchQuery, siteParam, workerUrl) {
 		const sites = [];
 		if (siteParam === 'all' || !siteParam) {
 			sites.push(
@@ -845,7 +846,7 @@ export default {
 			});
 		}
 
-		const sitePromises = sites.map(site => fetchPostsWithSearch(site, searchQuery));
+		const sitePromises = sites.map(site => fetchPostsWithSearch(site, searchQuery, workerUrl));
 		const siteResults = await Promise.all(sitePromises);
 
 		const allPosts = [];
@@ -952,7 +953,7 @@ export default {
 		}
 	}
 
-	async function fetchPostsWithSearch(site, searchQuery) {
+	async function fetchPostsWithSearch(site, searchQuery, workerUrl) {
 		try {
 			const params = new URLSearchParams( {
 				search: searchQuery,
@@ -990,7 +991,7 @@ export default {
 			console.log(`Got ${posts.length} posts from ${site.name}`);
 
 			const transformedPosts = await Promise.all(
-				posts.map(async (post) => transformPost(post, site, true))
+				posts.map(async (post) => transformPost(post, site, true, workerUrl))
 			);
 
 			return {
@@ -1009,7 +1010,7 @@ export default {
 	}
 
 
-	async function transformPost(post, site, fetchLinks = false) {
+	async function transformPost(post, site, fetchLinks = false, workerUrl = null) {
 		const downloadLinks = fetchLinks ? await extractDownloadLinks(post.link, site.type): [];
 		
 		// Enhanced image extraction - prioritize site-specific fields
@@ -1022,6 +1023,11 @@ export default {
 		// Fallback to content/excerpt image extraction for all sites
 		if (!image) {
 			image = extractImageFromContent(post.content?.rendered) || extractImageFromContent(post.excerpt?.rendered);
+		}
+		
+		// For SteamRip images, create a proxied URL to bypass Cloudflare protection
+		if (image && site.type === 'steamrip' && image.includes('steamrip.com') && workerUrl) {
+			image = `${workerUrl}/proxy-image?url=${encodeURIComponent(image)}`;
 		}
 
 		return {
@@ -1056,9 +1062,9 @@ export default {
 		await cache.put(new Request(`https://cache.internal/${cacheKey}`), cacheResponse);
 	}
 
-	async function revalidateSearchComplete(cacheKey, searchQuery, siteParam) {
+	async function revalidateSearchComplete(cacheKey, searchQuery, siteParam, workerUrl = null) {
 		const cache = caches.default;
-		const freshData = await fetchAllSearchResults(searchQuery, siteParam);
+		const freshData = await fetchAllSearchResults(searchQuery, siteParam, workerUrl);
 		const cacheResponse = new Response(JSON.stringify(freshData), {
 			headers: {
 				'Content-Type': 'application/json',
@@ -1126,12 +1132,18 @@ export default {
 
 		if (!response) {
 			try {
-				response = await fetch(imageUrl, {
-					headers: {
-						'Referer': 'https://www.skidrowreloaded.com/',
-						'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-					}
-				});
+				// Check if this is a SteamRip image that needs FlareSolverr
+				if (imageUrl.includes('steamrip.com')) {
+					response = await fetchSteamrip(imageUrl);
+				} else {
+					// Use regular fetch for other images
+					response = await fetch(imageUrl, {
+						headers: {
+							'Referer': 'https://www.skidrowreloaded.com/',
+							'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+						}
+					});
+				}
 
 				if (!response.ok) {
 					return new Response(`Failed to fetch image: ${response.status} ${response.statusText}`, {
