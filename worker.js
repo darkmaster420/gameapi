@@ -1011,7 +1011,18 @@ export default {
 
 	async function transformPost(post, site, fetchLinks = false) {
 		const downloadLinks = fetchLinks ? await extractDownloadLinks(post.link, site.type): [];
-		const image = extractImageFromContent(post.content?.rendered) || extractImageFromContent(post.excerpt?.rendered);
+		
+		// Enhanced image extraction - prioritize site-specific fields
+		let image = null;
+		if (site.type === 'gamedrive') {
+			// GameDrive provides featured_image_src and jetpack_featured_media_url
+			image = post.featured_image_src || post.jetpack_featured_media_url;
+		}
+		
+		// Fallback to content/excerpt image extraction for all sites
+		if (!image) {
+			image = extractImageFromContent(post.content?.rendered) || extractImageFromContent(post.excerpt?.rendered);
+		}
 
 		return {
 			id: `${site.type}_${post.id}`,
