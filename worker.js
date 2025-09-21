@@ -1019,6 +1019,11 @@ export default {
 		if (site.type === 'gamedrive') {
 			// GameDrive provides featured_image_src and jetpack_featured_media_url
 			image = post.featured_image_src || post.jetpack_featured_media_url;
+		} else if (site.type === 'steamrip') {
+			// SteamRip provides proper Open Graph image data - prioritize this over content extraction
+			if (post.yoast_head_json?.og_image && post.yoast_head_json.og_image.length > 0) {
+				image = post.yoast_head_json.og_image[0].url;
+			}
 		}
 		
 		// Fallback to content/excerpt image extraction for all sites
