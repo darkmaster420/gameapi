@@ -607,6 +607,7 @@ export default {
 
 	async function handleRecentUploadsComplete(request, corsHeaders, ctx) {
 		const cacheKey = `${CACHE_CONFIG.CACHE_PREFIX}${CACHE_CONFIG.RECENT_UPLOADS_KEY}`;
+		const workerUrl = new URL(request.url).origin;
 
 		try {
 			const cache = caches.default;
@@ -629,7 +630,7 @@ export default {
 					});
 				}
 
-				ctx.waitUntil(revalidateRecentUploadsComplete(cacheKey));
+				ctx.waitUntil(revalidateRecentUploadsComplete(cacheKey, workerUrl));
 				const staleData = await cachedResponse.json();
 				staleData.cached = true;
 				staleData.stale = true;
@@ -642,7 +643,7 @@ export default {
 				});
 			}
 
-			const freshData = await fetchAllRecentUploads();
+			const freshData = await fetchAllRecentUploads(workerUrl);
 
 			const cacheResponse = new Response(JSON.stringify(freshData), {
 				headers: {
@@ -733,7 +734,7 @@ export default {
 		}
 	}
 
-	async function fetchAllRecentUploads() {
+	async function fetchAllRecentUploads(workerUrl) {
 		const sites = [{
 			baseUrl: 'https://www.skidrowreloaded.com/wp-json/wp/v2/posts',
 			type: 'skidrow',
@@ -755,7 +756,7 @@ export default {
 				name: 'SteamRip'
 			}];
 
-		const sitePromises = sites.map(site => fetchRecentUploadsFromSite(site));
+		const sitePromises = sites.map(site => fetchRecentUploadsFromSite(site, workerUrl));
 		const siteResults = await Promise.all(sitePromises);
 
 		const allPosts = [];
@@ -892,7 +893,7 @@ export default {
 		};
 	}
 
-	async function fetchRecentUploadsFromSite(site) {
+	async function fetchRecentUploadsFromSite(site, workerUrl) {
 		try {
 			const params = new URLSearchParams( {
 				orderby: 'date',
@@ -935,7 +936,7 @@ export default {
 			const fetchLinks = false;
 
 			const transformedPosts = await Promise.all(
-				posts.map(async (post) => transformPost(post, site, fetchLinks))
+				posts.map(async (post) => transformPost(post, site, fetchLinks, workerUrl))
 			);
 
 			return {
@@ -1049,9 +1050,9 @@ export default {
 	}
 
 	// Background revalidation functions
-	async function revalidateRecentUploadsComplete(cacheKey) {
+	async function revalidateRecentUploadsComplete(cacheKey, workerUrl) {
 		const cache = caches.default;
-		const freshData = await fetchAllRecentUploads();
+		const freshData = await fetchAllRecentUploads(workerUrl);
 		const cacheResponse = new Response(JSON.stringify(freshData), {
 			headers: {
 				'Content-Type': 'application/json',
