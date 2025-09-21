@@ -138,8 +138,9 @@ export default {
 			if (host.includes('freegogpcgames.com') || host.includes('gdl.freegogpcgames.xyz')) {
 				return 'FreeGOG';
 			}
-			if (host.includes('mediafire')) return 'Mediafire';
-			if (host.includes('mega')) return 'MEGA';
+			   if (host.includes('mediafire')) return 'Mediafire';
+			   if (host.includes('megadb')) return 'MegaDB'; // Check megadb before mega
+			   if (host.includes('mega')) return 'MEGA';
 			if (host.includes('1fichier')) return '1Fichier';
 			if (host.includes('rapidgator')) return 'Rapidgator';
 			if (host.includes('uploaded')) return 'Uploaded';
