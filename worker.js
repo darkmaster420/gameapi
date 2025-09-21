@@ -1132,9 +1132,32 @@ export default {
 
 		if (!response) {
 			try {
-				// Check if this is a SteamRip image that needs FlareSolverr
+				// Check if this is a SteamRip image that needs Cloudflare clearance cookie
 				if (imageUrl.includes('steamrip.com')) {
-					response = await fetchSteamrip(imageUrl);
+					// Get a valid cookie for SteamRip
+					const cookie = await getValidSteamripCookie();
+					
+					response = await fetch(imageUrl, {
+						headers: {
+							'User-Agent': 'Cloudflare-Workers-Image-Proxy/2.0',
+							'Cookie': `cf_clearance=${cookie.cf_clearance}`,
+							'Referer': 'https://steamrip.com/'
+						}
+					});
+
+					// If the request fails with a 403, try with a fresh cookie
+					if (response.status === 403) {
+						console.log('Image proxy received 403, trying with fresh cookie');
+						const freshCookie = await getFreshSteamripCookie();
+						
+						response = await fetch(imageUrl, {
+							headers: {
+								'User-Agent': 'Cloudflare-Workers-Image-Proxy/2.0',
+								'Cookie': `cf_clearance=${freshCookie.cf_clearance}`,
+								'Referer': 'https://steamrip.com/'
+							}
+						});
+					}
 				} else {
 					// Use regular fetch for other images
 					response = await fetch(imageUrl, {
