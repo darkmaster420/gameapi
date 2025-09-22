@@ -84,8 +84,13 @@ export default {
 	// Maximum posts to fetch per site - set to high value to get all available posts
 	const MAX_POSTS_PER_SITE = 100;
 
-	// Global variable to store the SteamRip cookie (in a real implementation, you might want to use KV storage)
+	// Global variables to store Cloudflare bypass cookies (in a real implementation, you might want to use KV storage)
 	let steamripCookie = {
+		cf_clearance: null,
+		expires_at: 0
+	};
+
+	let skidrowCookie = {
 		cf_clearance: null,
 		expires_at: 0
 	};
@@ -424,6 +429,148 @@ export default {
 		}
 	}
 
+	// SkidrowReloaded cookie management functions
+	// Function to get a fresh cookie from FlareSolverr for SkidrowReloaded
+	async function getFreshSkidrowCookie() {
+		console.log('Getting fresh cf_clearance cookie for SkidrowReloaded');
+
+		try {
+			const flaresolverrUrl = 'https://flare.iforgor.cc/v1';
+			const response = await fetch(flaresolverrUrl, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({
+					cmd: 'request.get',
+					url: 'https://www.skidrowreloaded.com/wp-json/wp/v2/posts',
+					userAgent: 'Cloudflare-Workers-Search-API/2.0'
+				})
+			});
+
+			if (!response.ok) {
+				throw new Error(`FlareSolverr request failed: ${response.status}`);
+			}
+
+			const data = await response.json();
+
+			if (data.status !== 'ok') {
+				throw new Error(`FlareSolverr error: ${data.message}`);
+			}
+
+			// Extract cf_clearance cookie
+			let cf_clearance = null;
+			let expires_at = Date.now() + (4 * 60 * 60 * 1000); // Default 4 hours from now
+
+			if (data.solution.cookies && Array.isArray(data.solution.cookies)) {
+				const cfCookie = data.solution.cookies.find(cookie => cookie.name === 'cf_clearance');
+				if (cfCookie) {
+					cf_clearance = cfCookie.value;
+
+					// Use the actual expiration time if available, otherwise default to 4 hours
+					if (cfCookie.expires) {
+						expires_at = new Date(cfCookie.expires * 1000).getTime();
+					}
+
+					console.log('Successfully obtained cf_clearance cookie for SkidrowReloaded:', cf_clearance.substring(0, 20) + '...');
+				}
+			}
+
+			if (!cf_clearance) {
+				throw new Error('Failed to extract cf_clearance cookie from FlareSolverr response for SkidrowReloaded');
+			}
+
+			// Update the global cookie variable
+			skidrowCookie = {
+				cf_clearance: cf_clearance,
+				expires_at: expires_at
+			};
+
+			return skidrowCookie;
+		} catch (error) {
+			console.error('Error getting fresh SkidrowReloaded cookie:', error);
+			throw error;
+		}
+	}
+
+	// Function to get a valid SkidrowReloaded cookie (refresh if needed)
+	async function getValidSkidrowCookie() {
+		// If we don't have a cookie or it's expired, get a fresh one
+		if (!skidrowCookie.cf_clearance || Date.now() >= skidrowCookie.expires_at) {
+			return await getFreshSkidrowCookie();
+		}
+
+		return skidrowCookie;
+	}
+
+	// Function to make authenticated requests to SkidrowReloaded (both API and page content)
+	async function fetchSkidrow(url, isPageRequest = false) {
+		try {
+			// Get a valid cookie
+			const cookie = await getValidSkidrowCookie();
+
+			const requestType = isPageRequest ? "page": "API";
+			console.log(`Making authenticated request to SkidrowReloaded ${requestType}`);
+
+			// Set appropriate user agent based on request type
+			const userAgent = isPageRequest
+			? 'Cloudflare-Workers-Link-Extractor/2.0': 'Cloudflare-Workers-Search-API/2.0';
+
+			// Make the request with the cookie
+			const response = await fetch(url, {
+				headers: {
+					'User-Agent': userAgent,
+					'Cookie': `cf_clearance=${cookie.cf_clearance}`
+				}
+			});
+
+			// If the request fails with a 403 (Forbidden), the cookie might be expired
+			if (response.status === 403) {
+				console.log('Received 403 from SkidrowReloaded, cookie might be expired, getting a fresh one');
+
+				// Get a fresh cookie
+				const freshCookie = await getFreshSkidrowCookie();
+
+				// Retry the request with the fresh cookie
+				const retryResponse = await fetch(url, {
+					headers: {
+						'User-Agent': userAgent,
+						'Cookie': `cf_clearance=${freshCookie.cf_clearance}`
+					}
+				});
+
+				if (!retryResponse.ok) {
+					if (isPageRequest) {
+						console.warn(`Failed to fetch SkidrowReloaded page: ${retryResponse.status} ${retryResponse.statusText} (even with fresh cookie)`);
+						return null;
+					} else {
+						throw new Error(`SkidrowReloaded API returned ${retryResponse.status}: ${retryResponse.statusText} (even with fresh cookie)`);
+					}
+				}
+
+				return retryResponse;
+			}
+
+			if (!response.ok) {
+				if (isPageRequest) {
+					console.warn(`Failed to fetch SkidrowReloaded page: ${response.status} ${response.statusText}`);
+					return null;
+				} else {
+					throw new Error(`SkidrowReloaded API returned ${response.status}: ${response.statusText}`);
+				}
+			}
+
+			return response;
+		} catch (error) {
+			console.error(`Error fetching SkidrowReloaded:`, error);
+			if (isPageRequest) {
+				return null;
+			} else {
+				throw error;
+			}
+		}
+	}
+
 	async function handleClearDecryptCache(corsHeaders, env) {
 		try {
 			// List all keys with the prefix "decrypt:"
@@ -561,6 +708,8 @@ export default {
 			let response;
 			if (siteConfig.type === 'steamrip') {
 				response = await fetchSteamrip(postUrl);
+			} else if (siteConfig.type === 'skidrow') {
+				response = await fetchSkidrow(postUrl);
 			} else {
 				response = await fetch(postUrl, {
 					headers: {
@@ -916,6 +1065,9 @@ export default {
 			if (site.type === 'steamrip') {
 				// Use our new helper function to make authenticated requests
 				response = await fetchSteamrip(url);
+			} else if (site.type === 'skidrow') {
+				// Use our new helper function to make authenticated requests to SkidrowReloaded
+				response = await fetchSkidrow(url);
 			} else {
 				// Normal fetch for other sites
 				response = await fetch(url, {
@@ -977,6 +1129,9 @@ export default {
 		if (site.type === 'steamrip') {
 			// Use our helper function to make authenticated requests
 			response = await fetchSteamrip(url);
+		} else if (site.type === 'skidrow') {
+			// Use our helper function to make authenticated requests to SkidrowReloaded
+			response = await fetchSkidrow(url);
 		} else {
 			// Normal fetch for other sites
 			response = await fetch(url, {
@@ -1031,9 +1186,12 @@ export default {
 			image = extractImageFromContent(post.content?.rendered) || extractImageFromContent(post.excerpt?.rendered);
 		}
 		
-		// For SteamRip images, create a proxied URL to bypass Cloudflare protection
-		if (image && site.type === 'steamrip' && image.includes('steamrip.com') && workerUrl) {
-			image = `${workerUrl}/proxy-image?url=${encodeURIComponent(image)}`;
+		// For SteamRip and SkidrowReloaded images, create proxied URLs to bypass Cloudflare protection
+		if (image && workerUrl) {
+			if ((site.type === 'steamrip' && image.includes('steamrip.com')) ||
+			    (site.type === 'skidrow' && image.includes('skidrowreloaded.com'))) {
+				image = `${workerUrl}/proxy-image?url=${encodeURIComponent(image)}`;
+			}
 		}
 
 		return {
@@ -1138,7 +1296,7 @@ export default {
 
 		if (!response) {
 			try {
-				// Check if this is a SteamRip image that needs Cloudflare clearance cookie
+				// Check if this is a SteamRip or SkidrowReloaded image that needs Cloudflare clearance cookie
 				if (imageUrl.includes('steamrip.com')) {
 					// Get a valid cookie for SteamRip
 					const cookie = await getValidSteamripCookie();
@@ -1153,7 +1311,7 @@ export default {
 
 					// If the request fails with a 403, try with a fresh cookie
 					if (response.status === 403) {
-						console.log('Image proxy received 403, trying with fresh cookie');
+						console.log('Image proxy received 403, trying with fresh SteamRip cookie');
 						const freshCookie = await getFreshSteamripCookie();
 						
 						response = await fetch(imageUrl, {
@@ -1161,6 +1319,31 @@ export default {
 								'User-Agent': 'Cloudflare-Workers-Image-Proxy/2.0',
 								'Cookie': `cf_clearance=${freshCookie.cf_clearance}`,
 								'Referer': 'https://steamrip.com/'
+							}
+						});
+					}
+				} else if (imageUrl.includes('skidrowreloaded.com')) {
+					// Get a valid cookie for SkidrowReloaded
+					const cookie = await getValidSkidrowCookie();
+					
+					response = await fetch(imageUrl, {
+						headers: {
+							'User-Agent': 'Cloudflare-Workers-Image-Proxy/2.0',
+							'Cookie': `cf_clearance=${cookie.cf_clearance}`,
+							'Referer': 'https://www.skidrowreloaded.com/'
+						}
+					});
+
+					// If the request fails with a 403, try with a fresh cookie
+					if (response.status === 403) {
+						console.log('Image proxy received 403, trying with fresh SkidrowReloaded cookie');
+						const freshCookie = await getFreshSkidrowCookie();
+						
+						response = await fetch(imageUrl, {
+							headers: {
+								'User-Agent': 'Cloudflare-Workers-Image-Proxy/2.0',
+								'Cookie': `cf_clearance=${freshCookie.cf_clearance}`,
+								'Referer': 'https://www.skidrowreloaded.com/'
 							}
 						});
 					}
@@ -1572,12 +1755,24 @@ export default {
 					}
 				}
 			} else {
-				// Normal fetch for other sites
-				const response = await fetch(postUrl, {
-					headers: {
-						'User-Agent': 'Cloudflare-Workers-Link-Extractor/2.0'
-					}
-				});
+				// Handle site-specific fetching due to Cloudflare protection
+				let response;
+				if (siteType === 'skidrow') {
+					// Use our consolidated function to fetch SkidrowReloaded pages
+					response = await fetchSkidrow(postUrl, true);
+				} else {
+					// Normal fetch for other sites
+					response = await fetch(postUrl, {
+						headers: {
+							'User-Agent': 'Cloudflare-Workers-Link-Extractor/2.0'
+						}
+					});
+				}
+
+				if (!response) {
+					console.warn(`Failed to fetch post content from ${postUrl}`);
+					return [];
+				}
 
 				if (!response.ok) {
 					console.warn(`Failed to fetch post content from ${postUrl}`);
