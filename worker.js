@@ -506,52 +506,80 @@ export default {
 	// Function to make authenticated requests to SkidrowReloaded (both API and page content)
 	async function fetchSkidrow(url, isPageRequest = false) {
 		try {
-			// Get a valid cookie
-			const cookie = await getValidSkidrowCookie();
-
-			const requestType = isPageRequest ? "page": "API";
-			console.log(`Making authenticated request to SkidrowReloaded ${requestType}`);
-
 			// Set appropriate user agent based on request type
 			const userAgent = isPageRequest
-			? 'Cloudflare-Workers-Link-Extractor/2.0': 'Cloudflare-Workers-Search-API/2.0';
+				? 'Cloudflare-Workers-Link-Extractor/2.0'
+				: 'Cloudflare-Workers-Search-API/2.0';
 
-			// Make the request with the cookie
-			const response = await fetch(url, {
+			// 1. Try direct fetch (no cookie)
+			let response = await fetch(url, {
 				headers: {
-					'User-Agent': userAgent,
-					'Cookie': `cf_clearance=${cookie.cf_clearance}`
+					'User-Agent': userAgent
 				}
 			});
 
-			// If the request fails with a 403 (Forbidden), the cookie might be expired
-			if (response.status === 403) {
-				console.log('Received 403 from SkidrowReloaded, cookie might be expired, getting a fresh one');
+			// If direct fetch is successful, return it
+			if (response.ok) {
+				return response;
+			}
 
-				// Get a fresh cookie
-				const freshCookie = await getFreshSkidrowCookie();
+			// If response indicates Cloudflare protection, try with cookie
+			const cloudflareStatus = [403, 503];
+			let isCloudflare = cloudflareStatus.includes(response.status);
 
-				// Retry the request with the fresh cookie
-				const retryResponse = await fetch(url, {
+			// Also check for Cloudflare challenge in body (HTML page with challenge)
+			if (!isCloudflare && response.headers.get('content-type')?.includes('text/html')) {
+				const text = await response.text();
+				if (text.includes('cf-browser-verification') || text.includes('Cloudflare') || text.includes('Attention Required')) {
+					isCloudflare = true;
+				}
+			}
+
+			if (isCloudflare) {
+				// Get a valid cookie
+				const cookie = await getValidSkidrowCookie();
+				// Retry with cookie
+				response = await fetch(url, {
 					headers: {
 						'User-Agent': userAgent,
-						'Cookie': `cf_clearance=${freshCookie.cf_clearance}`
+						'Cookie': `cf_clearance=${cookie.cf_clearance}`
 					}
 				});
 
-				if (!retryResponse.ok) {
-					if (isPageRequest) {
-						console.warn(`Failed to fetch SkidrowReloaded page: ${retryResponse.status} ${retryResponse.statusText} (even with fresh cookie)`);
-						return null;
-					} else {
-						throw new Error(`SkidrowReloaded API returned ${retryResponse.status}: ${retryResponse.statusText} (even with fresh cookie)`);
+				// If the request fails with a 403 (Forbidden), the cookie might be expired
+				if (response.status === 403) {
+					console.log('Received 403 from SkidrowReloaded, cookie might be expired, getting a fresh one');
+					// Get a fresh cookie
+					const freshCookie = await getFreshSkidrowCookie();
+					// Retry the request with the fresh cookie
+					const retryResponse = await fetch(url, {
+						headers: {
+							'User-Agent': userAgent,
+							'Cookie': `cf_clearance=${freshCookie.cf_clearance}`
+						}
+					});
+					if (!retryResponse.ok) {
+						if (isPageRequest) {
+							console.warn(`Failed to fetch SkidrowReloaded page: ${retryResponse.status} ${retryResponse.statusText} (even with fresh cookie)`);
+							return null;
+						} else {
+							throw new Error(`SkidrowReloaded API returned ${retryResponse.status}: ${retryResponse.statusText} (even with fresh cookie)`);
+						}
 					}
+					return retryResponse;
 				}
 
-				return retryResponse;
-			}
-
-			if (!response.ok) {
+				if (!response.ok) {
+					if (isPageRequest) {
+						console.warn(`Failed to fetch SkidrowReloaded page: ${response.status} ${response.statusText}`);
+						return null;
+					} else {
+						throw new Error(`SkidrowReloaded API returned ${response.status}: ${response.statusText}`);
+					}
+				}
+				return response;
+			} else {
+				// Not Cloudflare, but still not ok
 				if (isPageRequest) {
 					console.warn(`Failed to fetch SkidrowReloaded page: ${response.status} ${response.statusText}`);
 					return null;
@@ -559,8 +587,6 @@ export default {
 					throw new Error(`SkidrowReloaded API returned ${response.status}: ${response.statusText}`);
 				}
 			}
-
-			return response;
 		} catch (error) {
 			console.error(`Error fetching SkidrowReloaded:`, error);
 			if (isPageRequest) {
