@@ -1349,29 +1349,40 @@ export default {
 						});
 					}
 				} else if (imageUrl.includes('skidrowreloaded.com')) {
-					// Get a valid cookie for SkidrowReloaded
-					const cookie = await getValidSkidrowCookie();
-					
+					// Try direct fetch first (no cookie)
 					response = await fetch(imageUrl, {
 						headers: {
 							'User-Agent': 'Cloudflare-Workers-Image-Proxy/2.0',
-							'Cookie': `cf_clearance=${cookie.cf_clearance}`,
 							'Referer': 'https://www.skidrowreloaded.com/'
 						}
 					});
 
-					// If the request fails with a 403, try with a fresh cookie
-					if (response.status === 403) {
-						console.log('Image proxy received 403, trying with fresh SkidrowReloaded cookie');
-						const freshCookie = await getFreshSkidrowCookie();
+					// If direct fetch fails (403/503), try with cf_clearance cookie
+					if (response.status === 403 || response.status === 503) {
+						console.log('Direct fetch failed for SkidrowReloaded image, trying with cf_clearance cookie');
+						const cookie = await getValidSkidrowCookie();
 						
 						response = await fetch(imageUrl, {
 							headers: {
 								'User-Agent': 'Cloudflare-Workers-Image-Proxy/2.0',
-								'Cookie': `cf_clearance=${freshCookie.cf_clearance}`,
+								'Cookie': `cf_clearance=${cookie.cf_clearance}`,
 								'Referer': 'https://www.skidrowreloaded.com/'
 							}
 						});
+
+						// If the request still fails with a 403, try with a fresh cookie
+						if (response.status === 403) {
+							console.log('Image proxy received 403, trying with fresh SkidrowReloaded cookie');
+							const freshCookie = await getFreshSkidrowCookie();
+							
+							response = await fetch(imageUrl, {
+								headers: {
+									'User-Agent': 'Cloudflare-Workers-Image-Proxy/2.0',
+									'Cookie': `cf_clearance=${freshCookie.cf_clearance}`,
+									'Referer': 'https://www.skidrowreloaded.com/'
+								}
+							});
+						}
 					}
 				} else {
 					// Use regular fetch for other images
