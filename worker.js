@@ -81,8 +81,14 @@ export default {
 		RECENT_UPLOADS_KEY: 'recent-uploads-complete',
 	};
 
-	// Maximum posts to fetch per site - set to high value to get all available posts
-	const MAX_POSTS_PER_SITE = 100;
+	// Maximum posts to fetch per site - site-specific limits to prevent CPU timeouts
+	const MAX_POSTS_PER_SITE = {
+		'skidrow': 40,
+		'gamedrive': 40, 
+		'steamrip': 40,
+		'freegog': 100,  // Keep higher limit for FreeGOG as it's less resource intensive
+		'default': 50
+	};
 
 	// Global variables to store Cloudflare bypass cookies (in a real implementation, you might want to use KV storage)
 	let steamripCookie = {
@@ -1081,7 +1087,8 @@ export default {
 		}
 
 		// Set per_page and page for all sites to fetch maximum available posts
-		params.set('per_page', MAX_POSTS_PER_SITE.toString());
+		const maxPosts = MAX_POSTS_PER_SITE[site.type] || MAX_POSTS_PER_SITE.default;
+		params.set('per_page', maxPosts.toString());
 		params.set('page', '1');
 
 		const url = `${site.baseUrl}?${params}`;
@@ -1113,9 +1120,7 @@ export default {
 			// Always extract download links for SteamRip, even for recent uploads
 			const fetchLinks = false;
 
-			const transformedPosts = await Promise.all(
-				posts.map(async (post) => transformPost(post, site, fetchLinks, workerUrl))
-			);
+			const transformedPosts = await transformPostsInBatches(posts, site, fetchLinks, workerUrl, 8);
 
 			return {
 				site: site.name,
@@ -1146,7 +1151,8 @@ export default {
 		}
 
 		// Set per_page for all sites to fetch maximum available posts
-		params.set('per_page', MAX_POSTS_PER_SITE.toString());
+		const maxPosts = MAX_POSTS_PER_SITE[site.type] || MAX_POSTS_PER_SITE.default;
+		params.set('per_page', maxPosts.toString());
 
 		const url = `${site.baseUrl}?${params}`;
 			console.log(`Fetching from ${site.name}: ${url}`);
@@ -1172,9 +1178,7 @@ export default {
 			const posts = await response.json();
 			console.log(`Got ${posts.length} posts from ${site.name}`);
 
-			const transformedPosts = await Promise.all(
-				posts.map(async (post) => transformPost(post, site, true, workerUrl))
-			);
+			const transformedPosts = await transformPostsInBatches(posts, site, true, workerUrl, 8);
 
 			return {
 				site: site.name,
@@ -1191,6 +1195,23 @@ export default {
 		}
 	}
 
+	// Helper function to process posts in batches to reduce CPU spikes
+	async function transformPostsInBatches(posts, site, fetchLinks, workerUrl, batchSize = 10) {
+		const results = [];
+		for (let i = 0; i < posts.length; i += batchSize) {
+			const batch = posts.slice(i, i + batchSize);
+			const batchResults = await Promise.all(
+				batch.map(async (post) => transformPost(post, site, fetchLinks, workerUrl))
+			);
+			results.push(...batchResults);
+			
+			// Small delay between batches to prevent CPU spikes
+			if (i + batchSize < posts.length) {
+				await new Promise(resolve => setTimeout(resolve, 1));
+			}
+		}
+		return results;
+	}
 
 	async function transformPost(post, site, fetchLinks = false, workerUrl = null) {
 		const downloadLinks = fetchLinks ? await extractDownloadLinks(post.link, site.type): [];
