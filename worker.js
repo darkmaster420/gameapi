@@ -450,7 +450,9 @@ export default {
 				body: JSON.stringify({
 					cmd: 'request.get',
 					url: 'https://www.skidrowreloaded.com/wp-json/wp/v2/posts',
-					userAgent: 'Cloudflare-Workers-Search-API/2.0'
+					userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+					maxTimeout: 60000, // Increase timeout to 60 seconds
+					returnOnlyCookies: false // Get full response to debug issues
 				})
 			});
 
@@ -459,9 +461,11 @@ export default {
 			}
 
 			const data = await response.json();
-
+			console.log('FlareSolverr response status:', data.status);
+			
 			if (data.status !== 'ok') {
-				throw new Error(`FlareSolverr error: ${data.message}`);
+				console.log('FlareSolverr error details:', data);
+				throw new Error(`FlareSolverr error: ${data.message || 'Unknown error'}`);
 			}
 
 			// Extract cf_clearance cookie
@@ -483,6 +487,9 @@ export default {
 			}
 
 			if (!cf_clearance) {
+				// Log more details for debugging
+				console.log('Available cookies:', data.solution.cookies?.map(c => c.name) || []);
+				console.log('Response headers:', data.solution.headers || {});
 				throw new Error('Failed to extract cf_clearance cookie from FlareSolverr response for SkidrowReloaded');
 			}
 
@@ -495,7 +502,15 @@ export default {
 			return skidrowCookie;
 		} catch (error) {
 			console.error('Error getting fresh SkidrowReloaded cookie:', error);
-			throw error;
+			
+			// Provide more specific error messages for common issues
+			if (error.message.includes('timeout') || error.message.includes('FlareSolverr request failed')) {
+				throw new Error('FlareSolverr timeout: Unable to bypass Cloudflare verify button (SkidrowReloaded CF protection)');
+			} else if (error.message.includes('Failed to extract cf_clearance')) {
+				throw new Error('FlareSolverr succeeded but no valid cf_clearance cookie found (SkidrowReloaded CF protection changed)');
+			} else {
+				throw error;
+			}
 		}
 	}
 
@@ -509,81 +524,202 @@ export default {
 		return skidrowCookie;
 	}
 
+	// Fallback function to fetch through FlareSolverr directly when cookies fail
+	async function fetchSkidrowThroughFlare(url) {
+		console.log('Attempting direct FlareSolverr fetch for SkidrowReloaded');
+		
+		try {
+			const flaresolverrUrl = 'https://flare.iforgor.cc/v1';
+			const response = await fetch(flaresolverrUrl, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({
+					cmd: 'request.get',
+					url: url,
+					userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+					maxTimeout: 60000
+				})
+			});
+
+			if (!response.ok) {
+				throw new Error(`FlareSolverr request failed: ${response.status}`);
+			}
+
+			const data = await response.json();
+			
+			if (data.status !== 'ok') {
+				throw new Error(`FlareSolverr error: ${data.message || 'Unknown error'}`);
+			}
+
+			// Create a mock response object from FlareSolverr data
+			const mockResponse = {
+				ok: data.solution.status >= 200 && data.solution.status < 300,
+				status: data.solution.status,
+				statusText: 'OK',
+				headers: new Map(Object.entries(data.solution.headers || {})),
+				json: async () => {
+					try {
+						return JSON.parse(data.solution.response);
+					} catch (e) {
+						throw new Error('Response is not valid JSON');
+					}
+				},
+				text: async () => data.solution.response
+			};
+
+			return mockResponse;
+		} catch (error) {
+			console.error('FlareSolverr direct fetch failed:', error);
+			throw error;
+		}
+	}
+
 	// Function to make authenticated requests to SkidrowReloaded (both API and page content)
 	async function fetchSkidrow(url, isPageRequest = false) {
 		try {
 			// Set appropriate user agent based on request type
 			const userAgent = isPageRequest
-				? 'Cloudflare-Workers-Link-Extractor/2.0'
-				: 'Cloudflare-Workers-Search-API/2.0';
+				? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+				: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36';
 
 			// 1. Try direct fetch (no cookie)
 			let response = await fetch(url, {
 				headers: {
-					'User-Agent': userAgent
+					'User-Agent': userAgent,
+					'Accept': 'application/json, text/plain, */*',
+					'Accept-Language': 'en-US,en;q=0.9',
+					'Cache-Control': 'no-cache',
+					'Pragma': 'no-cache'
 				}
 			});
 
 			// If direct fetch is successful, return it
 			if (response.ok) {
+				console.log(`Direct fetch succeeded for SkidrowReloaded: ${response.status}`);
 				return response;
 			}
 
-			// If response indicates Cloudflare protection, try with cookie
-			const cloudflareStatus = [403, 503];
+			// Check if we're being blocked by Cloudflare
+			const cloudflareStatus = [403, 503, 401, 429];
 			let isCloudflare = cloudflareStatus.includes(response.status);
 
-			// Also check for Cloudflare challenge in body (HTML page with challenge)
-			if (!isCloudflare && response.headers.get('content-type')?.includes('text/html')) {
-				const text = await response.text();
-				if (text.includes('cf-browser-verification') || text.includes('Cloudflare') || text.includes('Attention Required')) {
+			// Also check for Cloudflare challenge in response headers or body
+			if (!isCloudflare) {
+				const serverHeader = response.headers.get('server');
+				const cfRay = response.headers.get('cf-ray');
+				
+				if (serverHeader?.toLowerCase().includes('cloudflare') || cfRay) {
 					isCloudflare = true;
+					console.log('Detected Cloudflare from headers');
+				}
+				
+				// Check HTML content for Cloudflare indicators
+				if (!isCloudflare && response.headers.get('content-type')?.includes('text/html')) {
+					try {
+						const text = await response.text();
+						if (text.includes('cf-browser-verification') || 
+							text.includes('Cloudflare') || 
+							text.includes('Attention Required') ||
+							text.includes('Just a moment') ||
+							text.includes('DDoS protection')) {
+							isCloudflare = true;
+							console.log('Detected Cloudflare from content');
+						}
+					} catch (e) {
+						// Ignore text parsing errors
+						console.log('Could not parse response text for Cloudflare detection');
+					}
 				}
 			}
 
 			if (isCloudflare) {
-				// Get a valid cookie
-				const cookie = await getValidSkidrowCookie();
-				// Retry with cookie
-				response = await fetch(url, {
-					headers: {
-						'User-Agent': userAgent,
-						'Cookie': `cf_clearance=${cookie.cf_clearance}`
-					}
-				});
-
-				// If the request fails with a 403 (Forbidden), the cookie might be expired
-				if (response.status === 403) {
-					console.log('Received 403 from SkidrowReloaded, cookie might be expired, getting a fresh one');
-					// Get a fresh cookie
-					const freshCookie = await getFreshSkidrowCookie();
-					// Retry the request with the fresh cookie
-					const retryResponse = await fetch(url, {
+				console.log(`SkidrowReloaded blocked (${response.status}), attempting with cookie`);
+				
+				try {
+					// Get a valid cookie
+					const cookie = await getValidSkidrowCookie();
+					
+					// Retry with cookie
+					response = await fetch(url, {
 						headers: {
 							'User-Agent': userAgent,
-							'Cookie': `cf_clearance=${freshCookie.cf_clearance}`
+							'Cookie': `cf_clearance=${cookie.cf_clearance}`,
+							'Accept': 'application/json, text/plain, */*',
+							'Accept-Language': 'en-US,en;q=0.9',
+							'Cache-Control': 'no-cache',
+							'Pragma': 'no-cache'
 						}
 					});
-					if (!retryResponse.ok) {
+
+					// If the request fails with a 403/401 (Forbidden/Unauthorized), the cookie might be expired
+					if (response.status === 403 || response.status === 401) {
+						console.log(`Received ${response.status} from SkidrowReloaded, cookie might be expired, getting a fresh one`);
+						
+						// Get a fresh cookie
+						const freshCookie = await getFreshSkidrowCookie();
+						
+						// Retry the request with the fresh cookie
+						const retryResponse = await fetch(url, {
+							headers: {
+								'User-Agent': userAgent,
+								'Cookie': `cf_clearance=${freshCookie.cf_clearance}`,
+								'Accept': 'application/json, text/plain, */*',
+								'Accept-Language': 'en-US,en;q=0.9',
+								'Cache-Control': 'no-cache',
+								'Pragma': 'no-cache'
+							}
+						});
+						
+						if (!retryResponse.ok) {
+							if (isPageRequest) {
+								console.warn(`Failed to fetch SkidrowReloaded page: ${retryResponse.status} ${retryResponse.statusText} (even with fresh cookie)`);
+								return null;
+							} else {
+								throw new Error(`SkidrowReloaded API returned ${retryResponse.status}: ${retryResponse.statusText} (even with fresh cookie)`);
+							}
+						}
+						
+						console.log(`Fresh cookie retry succeeded: ${retryResponse.status}`);
+						return retryResponse;
+					}
+
+					if (!response.ok) {
 						if (isPageRequest) {
-							console.warn(`Failed to fetch SkidrowReloaded page: ${retryResponse.status} ${retryResponse.statusText} (even with fresh cookie)`);
+							console.warn(`Failed to fetch SkidrowReloaded page: ${response.status} ${response.statusText}`);
 							return null;
 						} else {
-							throw new Error(`SkidrowReloaded API returned ${retryResponse.status}: ${retryResponse.statusText} (even with fresh cookie)`);
+							throw new Error(`SkidrowReloaded API returned ${response.status}: ${response.statusText}`);
 						}
 					}
-					return retryResponse;
-				}
-
-				if (!response.ok) {
+					
+					console.log(`Cookie fetch succeeded: ${response.status}`);
+					return response;
+					
+				} catch (cookieError) {
+					console.error('Error getting SkidrowReloaded cookie:', cookieError);
+					
+					// Last resort: Try direct FlareSolverr fetch
+					console.log('Attempting fallback to direct FlareSolverr fetch');
+					try {
+						const flareResponse = await fetchSkidrowThroughFlare(url);
+						if (flareResponse.ok) {
+							console.log('FlareSolverr fallback succeeded');
+							return flareResponse;
+						} else {
+							throw new Error(`FlareSolverr fallback failed: ${flareResponse.status}`);
+						}
+					} catch (flareError) {
+						console.error('FlareSolverr fallback also failed:', flareError);
+					}
+					
 					if (isPageRequest) {
-						console.warn(`Failed to fetch SkidrowReloaded page: ${response.status} ${response.statusText}`);
 						return null;
 					} else {
-						throw new Error(`SkidrowReloaded API returned ${response.status}: ${response.statusText}`);
+						throw new Error(`SkidrowReloaded all methods failed. Cookie error: ${cookieError.message}`);
 					}
 				}
-				return response;
 			} else {
 				// Not Cloudflare, but still not ok
 				if (isPageRequest) {
@@ -595,10 +731,38 @@ export default {
 			}
 		} catch (error) {
 			console.error(`Error fetching SkidrowReloaded:`, error);
+			
+			// If this was not a page request and all normal methods failed, try FlareSolverr as absolute last resort
+			if (!isPageRequest) {
+				console.log('Normal fetch failed, trying FlareSolverr fallback as last resort');
+				try {
+					const flareResponse = await fetchSkidrowThroughFlare(url);
+					if (flareResponse.ok) {
+						console.log('FlareSolverr absolute fallback succeeded');
+						return flareResponse;
+					}
+				} catch (flareError) {
+					console.error('FlareSolverr absolute fallback failed:', flareError);
+					// Provide more specific error message for timeout issues
+					if (flareError.message.includes('timeout') || flareError.message.includes('FlareSolverr')) {
+						throw new Error(`SkidrowReloaded: Cloudflare protection detected, FlareSolverr timeout (verify button detection failed)`);
+					}
+				}
+			}
+			
 			if (isPageRequest) {
 				return null;
 			} else {
-				throw error;
+				// Provide better error messages based on the type of error
+				if (error.message.includes('401')) {
+					throw new Error('SkidrowReloaded: Unauthorized - Cloudflare protection active, FlareSolverr bypass failed');
+				} else if (error.message.includes('403')) {
+					throw new Error('SkidrowReloaded: Forbidden - Cloudflare protection active, cookies expired');
+				} else if (error.message.includes('timeout')) {
+					throw new Error('SkidrowReloaded: Request timeout - FlareSolverr verify button detection failed');
+				} else {
+					throw error;
+				}
 			}
 		}
 	}
