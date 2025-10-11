@@ -73,10 +73,10 @@ export default {
 
 	// Cache configuration
 	const CACHE_CONFIG = {
-		CACHE_TTL: 3600,
-		// 1 hour
-		STALE_WHILE_REVALIDATE: 7200,
-		// 2 hours
+		CACHE_TTL: 7200,
+		// 2 hours (extended from 1 hour)
+		STALE_WHILE_REVALIDATE: 14400,
+		// 4 hours (extended from 2 hours)
 		CACHE_PREFIX: 'game-search-v2:',
 		RECENT_UPLOADS_KEY: 'recent-uploads-complete',
 	};
