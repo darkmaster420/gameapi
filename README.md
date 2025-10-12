@@ -137,6 +137,33 @@ Proxies game images through /proxy-image for reliability.
 
 Handles crypt links by calling /decrypt?hash=... only when a user clicks on them (avoiding Worker subrequest limits).
 
+---
+
+## ⚙️ Configuration
+
+The worker supports optional environment variables for enhanced functionality:
+
+### Environment Variables
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `FLARESOLVERR_URL` | FlareSolverr instance URL for bypassing Cloudflare protection | `https://flare.iforgor.cc/v1` | No |
+
+### Setting Environment Variables
+
+In `wrangler.toml`:
+```toml
+[vars]
+FLARESOLVERR_URL = "https://your-flaresolverr-instance.com/v1"
+```
+
+Or using Wrangler CLI:
+```bash
+wrangler secret put FLARESOLVERR_URL
+```
+
+---
+
 ## 🛠 Deployment
 
 1. Install Wrangler CLI:

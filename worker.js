@@ -299,7 +299,7 @@ export default {
 		console.log('Getting fresh cf_clearance cookie for SteamRip');
 
 		try {
-			const flaresolverrUrl = 'https://flare.iforgor.cc/v1';
+			const flaresolverrUrl = env.FLARESOLVERR_URL || 'https://flare.iforgor.cc/v1';
 			const response = await fetch(flaresolverrUrl, {
 				method: 'POST',
 				headers: {
@@ -441,7 +441,7 @@ export default {
 		console.log('Getting fresh cf_clearance cookie for SkidrowReloaded');
 
 		try {
-			const flaresolverrUrl = 'https://flare.iforgor.cc/v1';
+			const flaresolverrUrl = env.FLARESOLVERR_URL || 'https://flare.iforgor.cc/v1';
 			const response = await fetch(flaresolverrUrl, {
 				method: 'POST',
 				headers: {
@@ -1546,7 +1546,7 @@ export default {
 	}
 
 	async function fetchWithFlareSolverr(url) {
-		const flaresolverrUrl = 'https://flare.iforgor.cc/v1';
+		const flaresolverrUrl = env.FLARESOLVERR_URL || 'https://flare.iforgor.cc/v1';
 
 		try {
 			const response = await fetch(flaresolverrUrl, {

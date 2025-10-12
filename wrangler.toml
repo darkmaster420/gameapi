@@ -8,7 +8,9 @@ enabled = true
 
 [vars]
 # Add any environment variables here if needed
+# FLARESOLVERR_URL = "https://your-flaresolverr-instance.com/v1"
 
 # For local development, you can also add:
 # [env.dev.vars]
 # DEBUG = "true"
+# FLARESOLVERR_URL = "https://your-dev-flaresolverr.com/v1"
