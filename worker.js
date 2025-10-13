@@ -86,7 +86,7 @@ export default {
 		'skidrow': 40,
 		'gamedrive': 40, 
 		'steamrip': 40,
-		'freegog': 100,  // Keep higher limit for FreeGOG as it's less resource intensive
+		'freegog': 40,
 		'default': 50
 	};
 
