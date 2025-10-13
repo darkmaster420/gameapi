@@ -1175,12 +1175,36 @@ export default {
 				throw new Error(`${site.name} API returned ${response.status}: ${response.statusText}`);
 			}
 
-			const posts = await response.json();
-			console.log(`Got ${posts.length} posts from ${site.name}`);
+		const posts = await response.json();
+		console.log(`Got ${posts.length} posts from ${site.name}`);
 
-			const transformedPosts = await transformPostsInBatches(posts, site, true, workerUrl, 8);
+		// Filter posts to only include those that actually match the search query
+		// WordPress search sometimes returns irrelevant results
+		const filteredPosts = posts.filter(post => {
+			const title = (post.title?.rendered || '').toLowerCase();
+			const searchLower = searchQuery.toLowerCase();
+			
+			// Split search query into words
+			const searchWords = searchLower.split(/\s+/).filter(w => w.length > 2);
+			
+			// Check if at least one significant word from search appears in title
+			if (searchWords.length === 0) return true; // No filter for very short queries
+			
+			// For single-word searches, require it to be in the title
+			if (searchWords.length === 1) {
+				return title.includes(searchWords[0]);
+			}
+			
+			// For multi-word searches, require at least 50% of words to match
+			const matchCount = searchWords.filter(word => title.includes(word)).length;
+			const matchRatio = matchCount / searchWords.length;
+			
+			return matchRatio >= 0.5;
+		});
+		
+		console.log(`Filtered to ${filteredPosts.length} relevant posts from ${site.name} (removed ${posts.length - filteredPosts.length} irrelevant)`);
 
-			return {
+		const transformedPosts = await transformPostsInBatches(filteredPosts, site, true, workerUrl, 8);			return {
 				site: site.name,
 				posts: transformedPosts,
 				error: null
