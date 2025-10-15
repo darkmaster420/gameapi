@@ -1086,10 +1086,12 @@ export default {
 			params.set('categories', '3');
 		}
 
-		// Set per_page and page for all sites to fetch maximum available posts
-		const maxPosts = MAX_POSTS_PER_SITE[site.type] || MAX_POSTS_PER_SITE.default;
-		params.set('per_page', maxPosts.toString());
-		params.set('page', '1');
+		// Set per_page and page for all sites EXCEPT freegog (freegog API doesn't handle these params well)
+		if (site.type !== 'freegog') {
+			const maxPosts = MAX_POSTS_PER_SITE[site.type] || MAX_POSTS_PER_SITE.default;
+			params.set('per_page', maxPosts.toString());
+			params.set('page', '1');
+		}
 
 		const url = `${site.baseUrl}?${params}`;
 			console.log(`Fetching recent uploads from ${site.name}: ${url}`);
@@ -1150,9 +1152,11 @@ export default {
 			params.set('categories', '3');
 		}
 
-		// Set per_page for all sites to fetch maximum available posts
-		const maxPosts = MAX_POSTS_PER_SITE[site.type] || MAX_POSTS_PER_SITE.default;
-		params.set('per_page', maxPosts.toString());
+		// Set per_page for all sites EXCEPT freegog (freegog API doesn't handle this param well)
+		if (site.type !== 'freegog') {
+			const maxPosts = MAX_POSTS_PER_SITE[site.type] || MAX_POSTS_PER_SITE.default;
+			params.set('per_page', maxPosts.toString());
+		}
 
 		const url = `${site.baseUrl}?${params}`;
 			console.log(`Fetching from ${site.name}: ${url}`);
