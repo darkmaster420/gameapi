@@ -1,23 +1,30 @@
 {
-  "name": "gamesearch-api",
-  "version": "1.0.0",
-  "description": "Cloudflare Worker API for searching game downloads",
-  "main": "worker.js",
+  "name": "gamesearch-api-v2",
+  "version": "2.0.0",
+  "description": "Game Search API - Vercel & Docker compatible",
+  "type": "module",
+  "main": "api/index.js",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "build": "echo 'No build step required for this worker'"
+    "dev": "vercel dev",
+    "build": "echo 'No build step required'",
+    "start": "node server.js",
+    "docker:build": "docker build -t gamesearch-api .",
+    "docker:run": "docker run -p 3000:3000 gamesearch-api"
   },
   "keywords": [
-    "cloudflare-workers",
+    "vercel",
+    "docker",
     "api",
     "games",
     "download"
   ],
   "author": "darkmaster420",
   "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2"
+  },
   "devDependencies": {
-    "wrangler": "^4.38.0"
+    "vercel": "^33.0.0"
   },
   "engines": {
     "node": ">=18"

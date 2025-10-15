@@ -4,7 +4,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Wrangler files
+# Vercel
+.vercel
+
+# Wrangler files (not used in vercel branch, but keep for reference)
 .wrangler/
 wrangler-dist/
 
