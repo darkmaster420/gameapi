@@ -8,7 +8,9 @@ import {
   MAX_POSTS_PER_SITE,
   stripHtml,
   extractServiceName,
-  classifyTorrentLink
+  classifyTorrentLink,
+  fetchSteamrip,
+  fetchSkidrow
 } from '../lib/helpers.js';
 
 // CORS headers
@@ -126,11 +128,19 @@ async function searchSite(siteConfig, searchQuery) {
     }
 
     const url = `${siteConfig.baseUrl}?${params}`;
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'GameSearch-API-v2/2.0'
-      }
-    });
+    
+    let response;
+    if (siteConfig.type === 'steamrip') {
+      response = await fetchSteamrip(url);
+    } else if (siteConfig.type === 'skidrow') {
+      response = await fetchSkidrow(url);
+    } else {
+      response = await fetch(url, {
+        headers: {
+          'User-Agent': 'GameSearch-API-v2/2.0'
+        }
+      });
+    }
 
     if (!response.ok) {
       console.error(`${siteConfig.name} returned ${response.status}`);
@@ -189,11 +199,19 @@ async function fetchRecentFromSite(siteConfig) {
     }
 
     const url = `${siteConfig.baseUrl}?${params}`;
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'GameSearch-API-v2/2.0'
-      }
-    });
+    
+    let response;
+    if (siteConfig.type === 'steamrip') {
+      response = await fetchSteamrip(url);
+    } else if (siteConfig.type === 'skidrow') {
+      response = await fetchSkidrow(url);
+    } else {
+      response = await fetch(url, {
+        headers: {
+          'User-Agent': 'GameSearch-API-v2/2.0'
+        }
+      });
+    }
 
     if (!response.ok) {
       return [];

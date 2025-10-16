@@ -7,10 +7,21 @@ compatibility_flags = ["nodejs_compat"]
 enabled = true
 
 [vars]
-# Add any environment variables here if needed
+# Environment variables for the worker
+# Uncomment and set these for production use:
+
+# FlareSolverr instance URL for bypassing Cloudflare protection (SteamRip, Skidrow)
 # FLARESOLVERR_URL = "https://your-flaresolverr-instance.com/v1"
+
+# Timeout for FlareSolverr requests in milliseconds (default: 30000 = 30s)
+# FLARE_TIMEOUT_MS = "60000"
+
+# Number of retry attempts for FlareSolverr requests (default: 2)
+# FLARE_RETRIES = "3"
 
 # For local development, you can also add:
 # [env.dev.vars]
 # DEBUG = "true"
 # FLARESOLVERR_URL = "https://your-dev-flaresolverr.com/v1"
+# FLARE_TIMEOUT_MS = "60000"
+# FLARE_RETRIES = "3"

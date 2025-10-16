@@ -81,6 +81,41 @@ export default {
 		RECENT_UPLOADS_KEY: 'recent-uploads-complete',
 	};
 
+	// FlareSolverr timeout/retry settings (ms)
+	const DEFAULT_FLARE_TIMEOUT_MS = 30000; // 30s default
+	const DEFAULT_FLARE_RETRIES = 2;
+
+	function sleep(ms) {
+		return new Promise(resolve => setTimeout(resolve, ms));
+	}
+
+	async function fetchWithTimeout(resource, options = {}, timeoutMs = DEFAULT_FLARE_TIMEOUT_MS) {
+		const controller = new AbortController();
+		const id = setTimeout(() => controller.abort(), timeoutMs);
+		options.signal = controller.signal;
+		try {
+			const res = await fetch(resource, options);
+			clearTimeout(id);
+			return res;
+		} catch (err) {
+			clearTimeout(id);
+			throw err;
+		}
+	}
+
+	async function retryableFetch(resource, options = {}, attempts = DEFAULT_FLARE_RETRIES, timeoutMs = DEFAULT_FLARE_TIMEOUT_MS) {
+		let lastErr;
+		for (let i = 0; i < attempts; i++) {
+			try {
+				return await fetchWithTimeout(resource, options, timeoutMs);
+			} catch (err) {
+				lastErr = err;
+				if (i < attempts - 1) await sleep(500 * (i + 1));
+			}
+		}
+		throw lastErr;
+	}
+
 	// Maximum posts to fetch per site - site-specific limits to prevent CPU timeouts
 	const MAX_POSTS_PER_SITE = {
 		'skidrow': 40,
@@ -300,7 +335,10 @@ export default {
 
 		try {
 			const flaresolverrUrl = env.FLARESOLVERR_URL || 'https://flare.iforgor.cc/v1';
-			const response = await fetch(flaresolverrUrl, {
+			const attempts = parseInt(env.FLARE_RETRIES || DEFAULT_FLARE_RETRIES, 10) || DEFAULT_FLARE_RETRIES;
+			const timeoutMs = parseInt(env.FLARE_TIMEOUT_MS || DEFAULT_FLARE_TIMEOUT_MS, 10) || DEFAULT_FLARE_TIMEOUT_MS;
+
+			const response = await retryableFetch(flaresolverrUrl, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
@@ -310,7 +348,7 @@ export default {
 					url: 'https://steamrip.com/wp-json/wp/v2/posts',
 					userAgent: 'Cloudflare-Workers-Search-API/2.0'
 				})
-			});
+			}, attempts, timeoutMs);
 
 			if (!response.ok) {
 				throw new Error(`FlareSolverr request failed: ${response.status}`);
@@ -442,7 +480,9 @@ export default {
 
 		try {
 			const flaresolverrUrl = env.FLARESOLVERR_URL || 'https://flare.iforgor.cc/v1';
-			const response = await fetch(flaresolverrUrl, {
+			const attempts = parseInt(env.FLARE_RETRIES || DEFAULT_FLARE_RETRIES, 10) || DEFAULT_FLARE_RETRIES;
+			const timeoutMs = parseInt(env.FLARE_TIMEOUT_MS || DEFAULT_FLARE_TIMEOUT_MS, 10) || DEFAULT_FLARE_TIMEOUT_MS;
+			const response = await retryableFetch(flaresolverrUrl, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
@@ -1575,9 +1615,11 @@ export default {
 
 	async function fetchWithFlareSolverr(url) {
 		const flaresolverrUrl = env.FLARESOLVERR_URL || 'https://flare.iforgor.cc/v1';
+		const attempts = parseInt(env.FLARE_RETRIES || DEFAULT_FLARE_RETRIES, 10) || DEFAULT_FLARE_RETRIES;
+		const timeoutMs = parseInt(env.FLARE_TIMEOUT_MS || DEFAULT_FLARE_TIMEOUT_MS, 10) || DEFAULT_FLARE_TIMEOUT_MS;
 
 		try {
-			const response = await fetch(flaresolverrUrl, {
+			const response = await retryableFetch(flaresolverrUrl, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
@@ -1587,7 +1629,7 @@ export default {
 					url: url,
 					userAgent: 'Cloudflare-Workers-Search-API/2.0'
 				})
-			});
+			}, attempts, timeoutMs);
 
 			if (!response.ok) {
 				throw new Error(`FlareSolverr request failed: ${response.status}`);

@@ -413,6 +413,7 @@ For issues or questions:
 3. Test with the health endpoint
 4. Check deployment logs
 
+
 ## 🎯 Roadmap
 
 - [ ] Add post details endpoint
@@ -421,3 +422,61 @@ For issues or questions:
 - [ ] Add rate limiting middleware
 - [ ] Add Redis caching for Docker deployments
 - [ ] Add more game sources
+
+---
+
+## ⚙️ Configuration & Environment Variables
+
+### Environment Variables
+
+The API supports optional environment variables for enhanced functionality:
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `FLARESOLVERR_URL` | FlareSolverr instance URL for bypassing Cloudflare protection | `https://flare.iforgor.cc/v1` | No |
+| `FLARE_TIMEOUT_MS` | Timeout for FlareSolverr requests in milliseconds | `30000` (30s) | No |
+| `FLARE_RETRIES` | Number of retry attempts for FlareSolverr requests | `2` | No |
+
+**Why FlareSolverr?**  
+Some sites (SteamRip, SkidrowReloaded) use Cloudflare protection. FlareSolverr bypasses this by solving challenges and providing valid cookies.
+
+**Recommended values for production:**
+- `FLARE_TIMEOUT_MS=60000` (60s) - For slower FlareSolverr instances
+- `FLARE_RETRIES=3` - More retries if your FlareSolverr is flaky
+
+### Setting Environment Variables
+
+**For Vercel:**
+```bash
+vercel env add FLARESOLVERR_URL
+vercel env add FLARE_TIMEOUT_MS
+vercel env add FLARE_RETRIES
+```
+
+Or add them in your Vercel dashboard under Settings → Environment Variables.
+
+**For Docker:**
+```bash
+docker run -e FLARESOLVERR_URL="https://your-instance.com/v1" \
+           -e FLARE_TIMEOUT_MS=60000 \
+           -e FLARE_RETRIES=3 \
+           -p 3000:3000 gameapi
+```
+
+Or use a `.env` file with docker-compose (see `docker-compose.yml`).
+
+**For Cloudflare Workers (v1 - main branch):**
+
+In `wrangler.toml`:
+```toml
+[vars]
+FLARESOLVERR_URL = "https://your-flaresolverr-instance.com/v1"
+FLARE_TIMEOUT_MS = "60000"
+FLARE_RETRIES = "3"
+```
+
+Or using Wrangler CLI:
+```bash
+wrangler secret put FLARESOLVERR_URL
+```
+
