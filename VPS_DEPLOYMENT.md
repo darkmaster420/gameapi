@@ -53,7 +53,7 @@ cd gameapi
 
 ### Option A: Complete Setup (Recommended)
 
-**Includes FlareSolverr** - Everything in one stack.
+**Includes FlareSolverr** - Everything in one stack. No configuration needed!
 
 ```bash
 # Start services
@@ -68,13 +68,22 @@ docker compose logs -f
 
 Your API is now running at `http://your-vps-ip:3000`
 
+**Optional: Customize settings**
+```bash
+# Create .env file for customization (optional)
+cp .env.example .env
+nano .env
+# Adjust PORT, timeouts, log levels, etc.
+docker compose restart
+```
+
 ### Option B: API Only (External FlareSolverr)
 
 If you already have FlareSolverr running elsewhere.
 
 ```bash
-# Create .env file
-cp .env.example .env
+# Create .env file (REQUIRED for standalone)
+cp .env.standalone.example .env
 
 # Edit .env and set your FlareSolverr URL
 nano .env

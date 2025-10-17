@@ -7,16 +7,16 @@ services:
     container_name: gamesearch-api
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:3000"
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=${NODE_ENV:-production}
       - PORT=3000
-      # FlareSolverr URL - UPDATE THIS to point to your existing FlareSolverr instance
+      # FlareSolverr URL - REQUIRED: Set this in .env file
       # Examples:
       #   - Local: http://localhost:8191/v1
       #   - Docker network: http://flaresolverr:8191/v1
       #   - Remote server: http://your-server-ip:8191/v1
-      - FLARESOLVERR_URL=${FLARESOLVERR_URL}
+      - FLARESOLVERR_URL=${FLARESOLVERR_URL:?FLARESOLVERR_URL is required. Set it in .env file}
       - FLARE_TIMEOUT_MS=${FLARE_TIMEOUT_MS:-60000}
       - FLARE_RETRIES=${FLARE_RETRIES:-3}
     healthcheck:

@@ -7,9 +7,9 @@ services:
     container_name: gameapi-flaresolverr
     restart: unless-stopped
     environment:
-      - LOG_LEVEL=info
-      - LOG_HTML=false
-      - CAPTCHA_SOLVER=none
+      - LOG_LEVEL=${FLARE_LOG_LEVEL:-info}
+      - LOG_HTML=${FLARE_LOG_HTML:-false}
+      - CAPTCHA_SOLVER=${FLARE_CAPTCHA_SOLVER:-none}
     networks:
       - gameapi-network
     healthcheck:
@@ -25,14 +25,14 @@ services:
     container_name: gamesearch-api
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:3000"
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=${NODE_ENV:-production}
       - PORT=3000
       # FlareSolverr URL (internal Docker network)
-      - FLARESOLVERR_URL=http://flaresolverr:8191/v1
-      - FLARE_TIMEOUT_MS=60000
-      - FLARE_RETRIES=3
+      - FLARESOLVERR_URL=${FLARESOLVERR_URL:-http://flaresolverr:8191/v1}
+      - FLARE_TIMEOUT_MS=${FLARE_TIMEOUT_MS:-60000}
+      - FLARE_RETRIES=${FLARE_RETRIES:-3}
     depends_on:
       flaresolverr:
         condition: service_healthy

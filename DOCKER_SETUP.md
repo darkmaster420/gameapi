@@ -54,25 +54,50 @@ docker-compose -f docker-compose.standalone.yml up -d
 
 ### Default Setup (docker-compose.yml / with-flaresolverr)
 
-No configuration needed! FlareSolverr is automatically configured on the internal network.
+**No configuration required!** FlareSolverr is automatically configured on the internal network with sensible defaults.
 
-Optional customization in `.env`:
+**Optional customization** - Create `.env` file from template:
+```bash
+cp .env.example .env
+nano .env
+```
+
+Available variables (all optional):
 ```env
-FLARE_TIMEOUT_MS=60000
-FLARE_RETRIES=3
-PORT=3000
-NODE_ENV=production
+# API Configuration
+PORT=3000                      # Host port to expose (default: 3000)
+NODE_ENV=production            # Environment mode (default: production)
+
+# FlareSolverr API Settings
+FLARE_TIMEOUT_MS=60000         # Request timeout (default: 60000)
+FLARE_RETRIES=3                # Retry attempts (default: 3)
+
+# FlareSolverr Service Settings (advanced)
+FLARE_LOG_LEVEL=info           # Log level: debug, info, warn, error
+FLARE_LOG_HTML=false           # Log HTML responses (default: false)
+FLARE_CAPTCHA_SOLVER=none      # Captcha solver (default: none)
 ```
 
 ### Standalone Setup (docker-compose.standalone.yml)
 
-**Required:** Create `.env` file:
+**Configuration required!** You must provide your external FlareSolverr URL.
+
+Create `.env` file:
+```bash
+cp .env.standalone.example .env
+nano .env
+```
+
+Required variables:
 ```env
+# REQUIRED - Your external FlareSolverr instance
 FLARESOLVERR_URL=http://your-flaresolverr:8191/v1
-FLARE_TIMEOUT_MS=60000
-FLARE_RETRIES=3
-PORT=3000
-NODE_ENV=production
+
+# Optional
+PORT=3000                      # Host port (default: 3000)
+NODE_ENV=production            # Environment (default: production)
+FLARE_TIMEOUT_MS=60000         # Timeout (default: 60000)
+FLARE_RETRIES=3                # Retries (default: 3)
 ```
 
 ---
