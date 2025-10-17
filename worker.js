@@ -334,7 +334,11 @@ export default {
 		console.log('Getting fresh cf_clearance cookie for SteamRip');
 
 		try {
-			const flaresolverrUrl = env.FLARESOLVERR_URL || 'https://flare.iforgor.cc/v1';
+			const flaresolverrUrl = env.FLARESOLVERR_URL;
+			if (!flaresolverrUrl) {
+				throw new Error('FLARESOLVERR_URL environment variable is required for SteamRip. Please set it in wrangler.toml or via wrangler secret');
+			}
+			
 			const attempts = parseInt(env.FLARE_RETRIES || DEFAULT_FLARE_RETRIES, 10) || DEFAULT_FLARE_RETRIES;
 			const timeoutMs = parseInt(env.FLARE_TIMEOUT_MS || DEFAULT_FLARE_TIMEOUT_MS, 10) || DEFAULT_FLARE_TIMEOUT_MS;
 
@@ -479,7 +483,11 @@ export default {
 		console.log('Getting fresh cf_clearance cookie for SkidrowReloaded');
 
 		try {
-			const flaresolverrUrl = env.FLARESOLVERR_URL || 'https://flare.iforgor.cc/v1';
+			const flaresolverrUrl = env.FLARESOLVERR_URL;
+			if (!flaresolverrUrl) {
+				throw new Error('FLARESOLVERR_URL environment variable is required for SkidrowReloaded. Please set it in wrangler.toml or via wrangler secret');
+			}
+			
 			const attempts = parseInt(env.FLARE_RETRIES || DEFAULT_FLARE_RETRIES, 10) || DEFAULT_FLARE_RETRIES;
 			const timeoutMs = parseInt(env.FLARE_TIMEOUT_MS || DEFAULT_FLARE_TIMEOUT_MS, 10) || DEFAULT_FLARE_TIMEOUT_MS;
 			const response = await retryableFetch(flaresolverrUrl, {
@@ -1614,7 +1622,11 @@ export default {
 	}
 
 	async function fetchWithFlareSolverr(url) {
-		const flaresolverrUrl = env.FLARESOLVERR_URL || 'https://flare.iforgor.cc/v1';
+		const flaresolverrUrl = env.FLARESOLVERR_URL;
+		if (!flaresolverrUrl) {
+			throw new Error('FLARESOLVERR_URL environment variable is required. Please set it in wrangler.toml or via wrangler secret');
+		}
+		
 		const attempts = parseInt(env.FLARE_RETRIES || DEFAULT_FLARE_RETRIES, 10) || DEFAULT_FLARE_RETRIES;
 		const timeoutMs = parseInt(env.FLARE_TIMEOUT_MS || DEFAULT_FLARE_TIMEOUT_MS, 10) || DEFAULT_FLARE_TIMEOUT_MS;
 

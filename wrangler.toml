@@ -8,20 +8,21 @@ enabled = true
 
 [vars]
 # Environment variables for the worker
-# Uncomment and set these for production use:
 
-# FlareSolverr instance URL for bypassing Cloudflare protection (SteamRip, Skidrow)
-# FLARESOLVERR_URL = "https://your-flaresolverr-instance.com/v1"
+# REQUIRED: FlareSolverr instance URL for bypassing Cloudflare protection (SteamRip, Skidrow)
+# You must set this for SteamRip and SkidrowReloaded to work
+# Example: FLARESOLVERR_URL = "http://your-flaresolverr:8191/v1"
+# To run FlareSolverr: docker run -d -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest
+FLARESOLVERR_URL = ""  # Set this to your FlareSolverr instance
 
-# Timeout for FlareSolverr requests in milliseconds (default: 30000 = 30s)
+# OPTIONAL: Timeout for FlareSolverr requests in milliseconds (default: 30000 = 30s)
 # FLARE_TIMEOUT_MS = "60000"
 
-# Number of retry attempts for FlareSolverr requests (default: 2)
+# OPTIONAL: Number of retry attempts for FlareSolverr requests (default: 2)
 # FLARE_RETRIES = "3"
 
 # For local development, you can also add:
 # [env.dev.vars]
-# DEBUG = "true"
-# FLARESOLVERR_URL = "https://your-dev-flaresolverr.com/v1"
+# FLARESOLVERR_URL = "http://localhost:8191/v1"
 # FLARE_TIMEOUT_MS = "60000"
 # FLARE_RETRIES = "3"

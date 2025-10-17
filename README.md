@@ -433,12 +433,30 @@ The API supports optional environment variables for enhanced functionality:
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `FLARESOLVERR_URL` | FlareSolverr instance URL for bypassing Cloudflare protection | `https://flare.iforgor.cc/v1` | No |
+| `FLARESOLVERR_URL` | FlareSolverr instance URL for bypassing Cloudflare protection (SteamRip, SkidrowReloaded) | None | **Yes** |
 | `FLARE_TIMEOUT_MS` | Timeout for FlareSolverr requests in milliseconds | `30000` (30s) | No |
 | `FLARE_RETRIES` | Number of retry attempts for FlareSolverr requests | `2` | No |
 
 **Why FlareSolverr?**  
 Some sites (SteamRip, SkidrowReloaded) use Cloudflare protection. FlareSolverr bypasses this by solving challenges and providing valid cookies.
+
+**Setting up FlareSolverr:**
+
+You need to run your own FlareSolverr instance:
+
+```bash
+# Using Docker (recommended)
+docker run -d \
+  --name=flaresolverr \
+  -p 8191:8191 \
+  -e LOG_LEVEL=info \
+  --restart unless-stopped \
+  ghcr.io/flaresolverr/flaresolverr:latest
+
+# Your FLARESOLVERR_URL will be: http://localhost:8191/v1
+```
+
+Or deploy FlareSolverr on a cloud platform (Railway, Render, etc.)
 
 **Recommended values for production:**
 - `FLARE_TIMEOUT_MS=60000` (60s) - For slower FlareSolverr instances
@@ -448,16 +466,24 @@ Some sites (SteamRip, SkidrowReloaded) use Cloudflare protection. FlareSolverr b
 
 **For Vercel:**
 ```bash
+# Required: Set your FlareSolverr URL
 vercel env add FLARESOLVERR_URL
+# Enter: http://your-flaresolverr-instance:8191/v1
+
+# Optional: Increase timeout if needed
 vercel env add FLARE_TIMEOUT_MS
+# Enter: 60000
+
+# Optional: More retries
 vercel env add FLARE_RETRIES
+# Enter: 3
 ```
 
 Or add them in your Vercel dashboard under Settings → Environment Variables.
 
 **For Docker:**
 ```bash
-docker run -e FLARESOLVERR_URL="https://your-instance.com/v1" \
+docker run -e FLARESOLVERR_URL="http://flaresolverr:8191/v1" \
            -e FLARE_TIMEOUT_MS=60000 \
            -e FLARE_RETRIES=3 \
            -p 3000:3000 gameapi
@@ -470,7 +496,7 @@ Or use a `.env` file with docker-compose (see `docker-compose.yml`).
 In `wrangler.toml`:
 ```toml
 [vars]
-FLARESOLVERR_URL = "https://your-flaresolverr-instance.com/v1"
+FLARESOLVERR_URL = "http://your-flaresolverr-instance:8191/v1"
 FLARE_TIMEOUT_MS = "60000"
 FLARE_RETRIES = "3"
 ```
@@ -478,5 +504,8 @@ FLARE_RETRIES = "3"
 Or using Wrangler CLI:
 ```bash
 wrangler secret put FLARESOLVERR_URL
+# Enter your FlareSolverr URL
 ```
+
+**Note:** Without FlareSolverr, SteamRip and SkidrowReloaded will not work. FreeGOG and GameDrive will continue to work normally.
 
