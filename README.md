@@ -1,8 +1,6 @@
-# Game Search API v2# 🎮 GameSearch Worker
+# 🎮 Game Search API v2
 
-
-
-A modern, flexible API for searching game downloads across multiple sites. Compatible with **Vercel** and **Docker** deployments.A [Cloudflare Worker](https://developers.cloudflare.com/workers/) that aggregates game data from multiple sources into a single JSON API.  
+A modern, flexible API for searching game downloads across multiple sites. Compatible with **Vercel**, **Docker**, and **Cloudflare Workers** deployments.
 
 Supports searching, recent uploads, proxied images, and on-demand **crypt link decryption**.
 
