@@ -1,6 +1,37 @@
 # Quick Start Guide - Game Search API v2
 
-## 🚀 Deploy to Vercel (30 seconds)
+Choose your deployment method:
+
+## 🐳 Docker (VPS) - **Recommended for Full Features**
+
+Perfect for VPS, homelab, or self-hosting with built-in FlareSolverr support.
+
+### Option A: Complete Setup (includes FlareSolverr)
+```bash
+git clone https://github.com/darkmaster420/gameapi.git
+cd gameapi
+docker compose up -d
+```
+
+✅ All sites working (including SteamRip & SkidrowReloaded)  
+API available at: `http://localhost:3000`
+
+### Option B: Standalone (external FlareSolverr)
+```bash
+git clone https://github.com/darkmaster420/gameapi.git
+cd gameapi
+cp .env.example .env
+nano .env  # Set FLARESOLVERR_URL=http://your-flaresolverr:8191/v1
+docker compose -f docker-compose.standalone.yml up -d
+```
+
+**📚 Full Guide:** [VPS_DEPLOYMENT.md](VPS_DEPLOYMENT.md) | [DOCKER_SETUP.md](DOCKER_SETUP.md)
+
+---
+
+## ☁️ Vercel (Serverless) - Easy but Limited
+
+⚠️ **Limitation:** Cannot run FlareSolverr. Need external instance for SteamRip/SkidrowReloaded.
 
 ```bash
 # 1. Install Vercel CLI
@@ -9,24 +40,18 @@ npm install -g vercel
 # 2. Deploy
 vercel
 
-# 3. Follow prompts, then your API is live!
-# URL: https://your-project.vercel.app
+# 3. Set environment variable in Vercel dashboard:
+#    FLARESOLVERR_URL=http://your-external-flaresolverr:8191/v1
 ```
 
-## 🐳 Run with Docker (1 minute)
+✅ FreeGOG & GameDrive work  
+⚠️ SteamRip & SkidrowReloaded require external FlareSolverr
 
-```bash
-# 1. Build and run
-docker-compose up -d
+---
 
-# 2. Test
-curl http://localhost:3000/health
+## ⚡ Cloudflare Workers - Edge Performance
 
-# 3. Search
-curl "http://localhost:3000/?search=cuphead"
-```
-
-## 💻 Run Locally (30 seconds)
+⚠️ **Limitation:** Cannot run FlareSolverr. Need external instance for SteamRip/SkidrowReloaded.
 
 ```bash
 # 1. Install dependencies (if needed)

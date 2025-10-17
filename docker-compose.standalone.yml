@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  # GameAPI service only (requires external FlareSolverr)
+  gameapi:
+    build: .
+    container_name: gamesearch-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # FlareSolverr URL - UPDATE THIS to point to your existing FlareSolverr instance
+      # Examples:
+      #   - Local: http://localhost:8191/v1
+      #   - Docker network: http://flaresolverr:8191/v1
+      #   - Remote server: http://your-server-ip:8191/v1
+      - FLARESOLVERR_URL=${FLARESOLVERR_URL}
+      - FLARE_TIMEOUT_MS=${FLARE_TIMEOUT_MS:-60000}
+      - FLARE_RETRIES=${FLARE_RETRIES:-3}
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    # Optional: If your FlareSolverr is in a Docker network, add it here
+    # networks:
+    #   - your-network-name
+
+# Optional: If your FlareSolverr is in a Docker network, define it here
+# networks:
+#   your-network-name:
+#     external: true

@@ -1,51 +1,83 @@
 # Docker Setup Guide - GameSearch API v2
 
-## Quick Start with Docker Compose (Recommended)
+## 🚀 Quick Start
 
-This setup includes FlareSolverr as a sidecar service, so you don't need to manage it separately!
+Choose your setup based on whether you already have FlareSolverr running:
 
-### 1. Clone and Setup
+### Option 1: Complete Setup (Includes FlareSolverr) - **Recommended for Most Users**
+
+Perfect if you don't have FlareSolverr or want everything in one place.
 
 ```bash
 git clone <your-repo>
 cd gameapi
-cp .env.example .env
+
+# Start both API and FlareSolverr
+docker-compose up -d
+
+# Or explicitly use the with-flaresolverr compose file
+docker-compose -f docker-compose.with-flaresolverr.yml up -d
 ```
 
-### 2. Configure Environment (Optional)
+This starts:
+- ✅ **FlareSolverr** on internal network (not exposed publicly)
+- ✅ **GameSearch API** on http://localhost:3000
 
-The `docker-compose.yml` already includes FlareSolverr with correct internal networking.
+### Option 2: Standalone API Only (External FlareSolverr)
 
-Edit `.env` if you want to customize:
+Perfect if you already have FlareSolverr running elsewhere.
+
+```bash
+git clone <your-repo>
+cd gameapi
+
+# Create .env file
+cp .env.example .env
+
+# Edit .env and set your FlareSolverr URL
+nano .env
+# Set: FLARESOLVERR_URL=http://your-flaresolverr:8191/v1
+
+# Start only the API
+docker-compose -f docker-compose.standalone.yml up -d
+```
+
+**FlareSolverr URL Examples:**
+- Local: `http://localhost:8191/v1`
+- Docker network: `http://flaresolverr:8191/v1`
+- Remote server: `http://192.168.1.100:8191/v1`
+- Cloud: `https://your-flaresolverr.example.com/v1`
+
+---
+
+## Configuration
+
+### Default Setup (docker-compose.yml / with-flaresolverr)
+
+No configuration needed! FlareSolverr is automatically configured on the internal network.
+
+Optional customization in `.env`:
 ```env
-FLARESOLVERR_URL=http://flaresolverr:8191/v1
 FLARE_TIMEOUT_MS=60000
 FLARE_RETRIES=3
 PORT=3000
 NODE_ENV=production
 ```
 
-### 3. Start Everything
+### Standalone Setup (docker-compose.standalone.yml)
 
-```bash
-docker-compose up -d
+**Required:** Create `.env` file:
+```env
+FLARESOLVERR_URL=http://your-flaresolverr:8191/v1
+FLARE_TIMEOUT_MS=60000
+FLARE_RETRIES=3
+PORT=3000
+NODE_ENV=production
 ```
 
-This starts:
-- ✅ **FlareSolverr** on internal network (not exposed)
-- ✅ **GameSearch API** on http://localhost:3000
+---
 
-### 4. Check Status
-
-```bash
-# View logs
-docker-compose logs -f
-
-# Check health
-curl http://localhost:3000/health
-```
-
-### 5. Test API
+## Testing Your Deployment
 
 ```bash
 # Test FreeGOG (no FlareSolverr needed)
@@ -62,7 +94,7 @@ curl "http://localhost:3000/recent"
 
 ## How It Works
 
-### Architecture
+### Architecture - Complete Setup (with FlareSolverr)
 
 ```
 ┌─────────────────────────────────────┐
@@ -89,6 +121,27 @@ curl "http://localhost:3000/recent"
     └─────────┘
 ```
 
+### Architecture - Standalone Setup (external FlareSolverr)
+
+```
+┌─────────────────────────────────────┐
+│  Docker Compose Stack               │
+│                                     │
+│  ┌──────────────────────────────┐  │
+│  │  GameSearch API :3000        │  │
+│  │  (Exposed to host)           │  │
+│  └──────────────┬───────────────┘  │
+│                 │                   │
+└─────────────────┼───────────────────┘
+                  │
+                  │ Network/HTTP
+                  ↓
+      ┌────────────────────────┐
+      │  FlareSolverr :8191    │
+      │  (External - yours)    │
+      └────────────────────────┘
+```
+
 ### Why This Works
 
 1. **FlareSolverr gets cookies**: When you request SteamRip, the API asks FlareSolverr to solve the Cloudflare challenge
@@ -101,55 +154,77 @@ curl "http://localhost:3000/recent"
 
 ## Management Commands
 
-### Start Services
+### Complete Setup (with FlareSolverr)
+
 ```bash
+# Start services
 docker-compose up -d
-```
+# OR
+docker-compose -f docker-compose.with-flaresolverr.yml up -d
 
-### Stop Services
-```bash
+# Stop services
 docker-compose down
-```
 
-### Restart Services
-```bash
-docker-compose restart
-```
-
-### View Logs
-```bash
-# All services
+# View logs
 docker-compose logs -f
 
-# Just API
-docker-compose logs -f gameapi
+# Restart services
+docker-compose restart
 
-# Just FlareSolverr
-docker-compose logs -f flaresolverr
-```
-
-### Rebuild After Code Changes
-```bash
+# Rebuild after code changes
 docker-compose down
 docker-compose build --no-cache
 docker-compose up -d
+```
+
+### Standalone Setup (API only)
+
+```bash
+# Start API
+docker-compose -f docker-compose.standalone.yml up -d
+
+# Stop API
+docker-compose -f docker-compose.standalone.yml down
+
+# View logs
+docker-compose -f docker-compose.standalone.yml logs -f
+
+# Restart API
+docker-compose -f docker-compose.standalone.yml restart
+
+# Rebuild after code changes
+docker-compose -f docker-compose.standalone.yml down
+docker-compose -f docker-compose.standalone.yml build --no-cache
+docker-compose -f docker-compose.standalone.yml up -d
+```
+
+### View Individual Service Logs
+
+```bash
+# API logs
+docker logs gamesearch-api -f
+
+# FlareSolverr logs (if using complete setup)
+docker logs gameapi-flaresolverr -f
 ```
 
 ---
 
 ## Troubleshooting
 
-### FlareSolverr not starting
+### Complete Setup Issues
+
+#### FlareSolverr not starting
 
 ```bash
 # Check FlareSolverr logs
-docker-compose logs flaresolverr
+docker logs gameapi-flaresolverr
 
 # Restart FlareSolverr
 docker-compose restart flaresolverr
 ```
 
-### API can't reach FlareSolverr
+#### API can't reach FlareSolverr
 
 **Error:** `FLARESOLVERR_URL environment variable is required`
 
@@ -161,7 +236,39 @@ docker-compose down
 docker-compose up -d
 ```
 
-### SteamRip still returns 403
+### Standalone Setup Issues
+
+#### Can't connect to external FlareSolverr
+
+**Error:** `ECONNREFUSED` or timeout errors
+
+**Fix:**
+1. Check your `.env` file has correct `FLARESOLVERR_URL`
+2. Verify FlareSolverr is running: `curl http://your-flaresolverr:8191/health`
+3. If using Docker networks, ensure both containers are on same network
+4. Check firewall rules if using remote FlareSolverr
+
+**Example: Connecting to external Docker FlareSolverr**
+```bash
+# If your FlareSolverr is named "my-flaresolverr" on network "mynetwork"
+# Update docker-compose.standalone.yml:
+
+services:
+  gameapi:
+    # ... existing config ...
+    environment:
+      - FLARESOLVERR_URL=http://my-flaresolverr:8191/v1
+    networks:
+      - mynetwork
+
+networks:
+  mynetwork:
+    external: true
+```
+
+### General Issues
+
+#### SteamRip still returns 403
 
 **Possible causes:**
 1. FlareSolverr timeout - increase `FLARE_TIMEOUT_MS`
@@ -170,11 +277,12 @@ docker-compose up -d
 
 **Debug:**
 ```bash
-# Test FlareSolverr directly
-docker exec -it flaresolverr curl http://localhost:8191/health
+# Test FlareSolverr health
+curl http://localhost:8191/health  # if complete setup
+curl http://your-flaresolverr:8191/health  # if standalone
 
 # Check API logs
-docker-compose logs -f gameapi | grep -i steamrip
+docker logs gamesearch-api | grep -i steamrip
 ```
 
 ### Port 3000 already in use
