@@ -1,6 +1,6 @@
 {
   "name": "gamesearch-api-v2",
-  "version": "2.1.1",
+  "version": "2.1.5",
   "description": "Game Search API - Vercel & Docker compatible",
   "type": "module",
   "main": "api/index.js",
