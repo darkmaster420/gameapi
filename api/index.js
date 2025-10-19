@@ -267,28 +267,27 @@ async function handlePostDetails(req, res) {
   try {
     // Construct the full post URL
     let postUrl;
-    if (siteConfig.type === 'steamrip') {
-      postUrl = `https://steamrip.com/${postId}`;
-    } else if (siteConfig.type === 'skidrow') {
-      postUrl = `https://www.skidrowreloaded.com/${postId}`;
-    } else {
-      // For WordPress sites (gamedrive, freegog), use WP REST API
-      postUrl = `${siteConfig.baseUrl}/${postId}`;
-    }
-
-    console.log(`Fetching post details from: ${postUrl}`);
-
     let response;
+    
     if (siteConfig.type === 'steamrip') {
+      // SteamRip uses slug-based URLs, need to fetch from API first
+      postUrl = `${siteConfig.baseUrl}/${postId}`;
+      console.log(`Fetching SteamRip post from API: ${postUrl}`);
       response = await fetchSteamrip(postUrl);
-    } else if (siteConfig.type === 'skidrow') {
-      response = await fetchSkidrow(postUrl);
     } else {
-      response = await fetch(postUrl, {
-        headers: {
-          'User-Agent': 'Game-Search-API-v2/2.0'
-        }
-      });
+      // All WordPress sites (skidrow, gamedrive, freegog) use WP REST API with numeric IDs
+      postUrl = `${siteConfig.baseUrl}/${postId}`;
+      console.log(`Fetching post details from: ${postUrl}`);
+      
+      if (siteConfig.type === 'skidrow') {
+        response = await fetchSkidrow(postUrl);
+      } else {
+        response = await fetch(postUrl, {
+          headers: {
+            'User-Agent': 'Game-Search-API-v2/2.0'
+          }
+        });
+      }
     }
 
     if (!response.ok) {
