@@ -11,7 +11,8 @@ import {
   classifyTorrentLink,
   fetchSteamrip,
   fetchSkidrow,
-  transformPostForV2
+  transformPostForV2,
+  isValidImageUrl
 } from '../lib/helpers.js';
 
 // CORS headers
@@ -315,10 +316,81 @@ async function handlePostDetails(req, res) {
 }
 
 async function handleImageProxy(req, res) {
-  return res.status(501).json({
-    success: false,
-    error: 'Image proxy endpoint not yet implemented in v2'
-  });
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const imageUrl = url.searchParams.get('url');
+
+  if (!imageUrl) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing url parameter'
+    });
+  }
+
+  // Validate image URL
+  if (!isValidImageUrl(imageUrl)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid image URL'
+    });
+  }
+
+  try {
+    let response;
+    const parsedUrl = new URL(imageUrl);
+
+    // Handle SteamRip images (Cloudflare protected)
+    if (parsedUrl.hostname.includes('steamrip.com')) {
+      response = await fetchSteamrip(imageUrl, true);
+      
+      if (!response || !response.ok) {
+        console.warn(`Failed to fetch SteamRip image: ${response?.status || 'no response'}`);
+        return res.status(response?.status || 500).send('Failed to fetch image from SteamRip');
+      }
+    }
+    // Handle SkidrowReloaded images (Cloudflare protected)
+    else if (parsedUrl.hostname.includes('skidrowreloaded.com')) {
+      response = await fetchSkidrow(imageUrl, true);
+      
+      if (!response || !response.ok) {
+        console.warn(`Failed to fetch Skidrow image: ${response?.status || 'no response'}`);
+        return res.status(response?.status || 500).send('Failed to fetch image from Skidrow');
+      }
+    }
+    // Standard fetch for other sites
+    else {
+      response = await fetch(imageUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': parsedUrl.origin + '/',
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9'
+        }
+      });
+
+      if (!response.ok) {
+        console.warn(`Failed to fetch image: ${response.status} ${response.statusText}`);
+        return res.status(response.status).send(`Failed to fetch image: ${response.statusText}`);
+      }
+    }
+
+    // Get content type
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
+    
+    // Set response headers
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=604800, immutable'); // Cache for 7 days
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+
+    // Convert response to buffer and send
+    const buffer = await response.arrayBuffer();
+    return res.send(Buffer.from(buffer));
+
+  } catch (error) {
+    console.error('Image proxy error:', error);
+    return res.status(500).send(`Error fetching image: ${error.message}`);
+  }
 }
 
 async function handleDecrypt(req, res) {
