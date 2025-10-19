@@ -10,7 +10,8 @@ import {
   extractServiceName,
   classifyTorrentLink,
   fetchSteamrip,
-  fetchSkidrow
+  fetchSkidrow,
+  transformPostForV2
 } from '../lib/helpers.js';
 
 // CORS headers
@@ -236,10 +237,81 @@ async function fetchRecentFromSite(siteConfig) {
 }
 
 async function handlePostDetails(req, res) {
-  return res.status(501).json({
-    success: false,
-    error: 'Post details endpoint not yet implemented in v2'
-  });
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const postId = url.searchParams.get('id');
+  const site = url.searchParams.get('site');
+
+  if (!postId) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing post ID parameter'
+    });
+  }
+
+  if (!site) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing site parameter (skidrow, freegog, gamedrive, steamrip)'
+    });
+  }
+
+  const siteConfig = SITE_CONFIGS[site];
+  if (!siteConfig) {
+    return res.status(400).json({
+      success: false,
+      error: `Invalid site parameter. Valid options: ${Object.keys(SITE_CONFIGS).join(', ')}`
+    });
+  }
+
+  try {
+    // Construct the full post URL
+    let postUrl;
+    if (siteConfig.type === 'steamrip') {
+      postUrl = `https://steamrip.com/${postId}`;
+    } else if (siteConfig.type === 'skidrow') {
+      postUrl = `https://www.skidrowreloaded.com/${postId}`;
+    } else {
+      // For WordPress sites (gamedrive, freegog), use WP REST API
+      postUrl = `${siteConfig.baseUrl}/${postId}`;
+    }
+
+    console.log(`Fetching post details from: ${postUrl}`);
+
+    let response;
+    if (siteConfig.type === 'steamrip') {
+      response = await fetchSteamrip(postUrl);
+    } else if (siteConfig.type === 'skidrow') {
+      response = await fetchSkidrow(postUrl);
+    } else {
+      response = await fetch(postUrl, {
+        headers: {
+          'User-Agent': 'Game-Search-API-v2/2.0'
+        }
+      });
+    }
+
+    if (!response.ok) {
+      throw new Error(`${siteConfig.name} API returned ${response.status}: ${response.statusText}`);
+    }
+
+    const post = await response.json();
+    
+    // Transform the post with download links enabled
+    const transformedPost = await transformPostForV2(post, siteConfig, true);
+
+    return res.status(200).json({
+      success: true,
+      post: transformedPost,
+      cached: false
+    });
+
+  } catch (error) {
+    console.error('Error fetching post details:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
 }
 
 async function handleImageProxy(req, res) {
