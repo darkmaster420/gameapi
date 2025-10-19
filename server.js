@@ -4,7 +4,16 @@
  */
 
 import express from 'express';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import handler from './api/index.js';
+
+// Get package.json version
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const packageJson = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
+const VERSION = packageJson.version;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,6 +32,21 @@ app.use((req, res, next) => {
   }
   
   next();
+});
+
+// Version endpoint
+app.get('/version', (req, res) => {
+  res.json({
+    success: true,
+    version: VERSION,
+    timestamp: new Date().toISOString(),
+    cloudflare_detection: 'improved',
+    changes: [
+      'Dynamic Cloudflare detection on every request',
+      'Checks response content even with 200 status',
+      'Improved FlareSolverr integration for intermittent CF protection'
+    ]
+  });
 });
 
 // Route all requests through the Vercel handler
@@ -47,7 +71,7 @@ app.use('/', async (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     success: true,
-    version: '2.0.0',
+    version: VERSION,
     status: 'healthy',
     timestamp: new Date().toISOString()
   });
@@ -55,10 +79,12 @@ app.get('/health', (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Game Search API v2 running on port ${PORT}`);
+  console.log(`🚀 Game Search API v${VERSION} running on port ${PORT}`);
+  console.log(`📍 Version: http://localhost:${PORT}/version`);
   console.log(`📍 Health check: http://localhost:${PORT}/health`);
   console.log(`🔍 Search: http://localhost:${PORT}/?search=your-game`);
   console.log(`📦 Recent: http://localhost:${PORT}/recent`);
+  console.log(`📬 Post: http://localhost:${PORT}/post`);
 });
 
 // Graceful shutdown
