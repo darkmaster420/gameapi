@@ -1934,21 +1934,20 @@ export default {
 						}];
 					}
 
-					// If no extras are found, proceed to scrape other links
-					// Corrected regex to handle all characters in the hash
-					const cryptRegex = /https?:\/\/crypt\.cybar\.xyz\/(?:link)?\#?([A-Za-z0-9_\-\+\/=]+)/gi;
-					let match;
-					while ((match = cryptRegex.exec(html)) !== null) {
-						const cryptId = match[1];
-						const cryptUrl = `https://crypt.cybar.xyz/link#${cryptId}`;
-						if (!downloadLinks.some(l => l.url === cryptUrl)) {
-							downloadLinks.push({
-								type: 'crypt', service: 'Crypt', url: cryptUrl, text: 'Encrypted Link'
-							});
-						}
+				// If no extras are found, proceed to scrape other links
+				// Updated regex to match crypt.cybar.xyz, crypt.cybar.to, and similar variations
+				const cryptRegex = /https?:\/\/crypt\.cybar\.([a-z]{2,})\/(?:link)?\#?([A-Za-z0-9_\-\+\/=]+)/gi;
+				let match;
+				while ((match = cryptRegex.exec(html)) !== null) {
+					const domain = match[1]; // xyz, to, etc.
+					const cryptId = match[2];
+					const cryptUrl = `https://crypt.cybar.${domain}/link#${cryptId}`;
+					if (!downloadLinks.some(l => l.url === cryptUrl)) {
+						downloadLinks.push({
+							type: 'crypt', service: 'Crypt', url: cryptUrl, text: 'Encrypted Link'
+						});
 					}
-
-					const approvedHosters = [
+				}					const approvedHosters = [
 						'mediafire.com',
 						'mega.nz',
 						'1fichier.com',
