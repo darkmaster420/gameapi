@@ -162,10 +162,28 @@ async function searchSite(siteConfig, searchQuery) {
 }
 
 async function handleRecentUploads(req, res) {
-  const allSites = Object.values(SITE_CONFIGS);
+  // Exclude SteamRip from recent uploads due to frequent timeouts with FlareSolverr
+  // SteamRip still works for search and individual post fetches
+  const allSites = Object.values(SITE_CONFIGS).filter(site => site.type !== 'steamrip');
+  
+  console.log(`Fetching recent uploads from ${allSites.length} sites (excluding SteamRip)`);
+  
   const fetchPromises = allSites.map(site => fetchRecentFromSite(site));
-  const allResults = await Promise.all(fetchPromises);
-  const combinedResults = allResults.flat();
+  
+  // Use Promise.allSettled to not fail if one site times out
+  const allResults = await Promise.allSettled(fetchPromises);
+  
+  // Extract successful results and log failures
+  const combinedResults = allResults
+    .filter(result => result.status === 'fulfilled')
+    .flatMap(result => result.value);
+  
+  // Log any failures
+  allResults.forEach((result, index) => {
+    if (result.status === 'rejected') {
+      console.error(`Failed to fetch from ${allSites[index].name}:`, result.reason);
+    }
+  });
 
   // Sort by date
   combinedResults.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -173,7 +191,10 @@ async function handleRecentUploads(req, res) {
   return res.status(200).json({
     success: true,
     results: combinedResults,
-    count: combinedResults.length
+    count: combinedResults.length,
+    // Include info about which sites succeeded/failed
+    sitesAttempted: allSites.length,
+    sitesSucceeded: allResults.filter(r => r.status === 'fulfilled').length
   });
 }
 
