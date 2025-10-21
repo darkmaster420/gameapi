@@ -151,15 +151,9 @@ async function searchSite(siteConfig, searchQuery) {
 
     const posts = await response.json();
 
-    return posts.map(post => ({
-      id: post.id.toString(),
-      title: stripHtml(post.title?.rendered || post.title || ''),
-      excerpt: stripHtml(post.excerpt?.rendered || post.excerpt || ''),
-      link: post.link,
-      date: post.date,
-      source: siteConfig.name,
-      siteType: siteConfig.type
-    }));
+    // Transform posts with full data including images and download links
+    const transformPromises = posts.map(post => transformPostForV2(post, siteConfig, false));
+    return await Promise.all(transformPromises);
 
   } catch (error) {
     console.error(`Error searching ${siteConfig.name}:`, error);
@@ -221,15 +215,9 @@ async function fetchRecentFromSite(siteConfig) {
 
     const posts = await response.json();
 
-    return posts.map(post => ({
-      id: post.id.toString(),
-      title: stripHtml(post.title?.rendered || post.title || ''),
-      excerpt: stripHtml(post.excerpt?.rendered || post.excerpt || ''),
-      link: post.link,
-      date: post.date,
-      source: siteConfig.name,
-      siteType: siteConfig.type
-    }));
+    // Transform posts with full data including images and download links
+    const transformPromises = posts.map(post => transformPostForV2(post, siteConfig, false));
+    return await Promise.all(transformPromises);
 
   } catch (error) {
     console.error(`Error fetching recent from ${siteConfig.name}:`, error);
