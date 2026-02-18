@@ -2164,9 +2164,10 @@ export default {
 						}
 					}
 
-					const freegogBtnRegex = /<a[^>]+class=["'][^"']*download-btn[^"']*["'][^>]+href=["'](https?:\/\/gdl\.freegogpcgames\.xyz\/[^"']+)["'][^>]*>([^<]+)<\/a>/gi;
+					// FreeGOG download-gen.php links — these are usable download pages
+					const freegogGenRegex = /<a[^>]+href=["'](https?:\/\/gdl\.freegogpcgames\.xyz\/[^"']+)["'][^>]*>([^<]*)<\/a>/gi;
 					let fb;
-					while ((fb = freegogBtnRegex.exec(html)) !== null) {
+					while ((fb = freegogGenRegex.exec(html)) !== null) {
 						const url = fb[1];
 						const linkText = stripHtml(fb[2]).trim();
 						if (!downloadLinks.some(l => l.url === url)) {
