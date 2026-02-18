@@ -122,6 +122,7 @@ export default {
 		'gamedrive': 40, 
 		'steamrip': 40,
 		'freegog': 40,
+		'reloadedsteam': 40,
 		'default': 50
 	};
 
@@ -163,6 +164,11 @@ export default {
 				baseUrl: 'https://steamrip.com/wp-json/wp/v2/posts',
 				type: 'steamrip',
 				name: 'SteamRip'
+			},
+			'reloadedsteam': {
+				baseUrl: 'https://reloadedsteam.com/wp-json/wp/v2/posts',
+				type: 'reloadedsteam',
+				name: 'ReloadedSteam'
 			}
 		};
 		return siteConfigs[siteType] || null;
@@ -208,6 +214,8 @@ export default {
 			// Add SteamRip specific hosters
 			if (host.includes('buzzheavier')) return 'BuzzHeavier';
 			if (host.includes('datanodes')) return 'DataNodes';
+			if (host.includes('datavaults')) return 'DataVaults';
+			if (host.includes('vikingfile')) return 'VikingFile';
 			if (host.includes('filecrypt')) return 'FileCrypt';
 			if (host.includes('megadb')) return 'MegaDB'; // Added for MegaDB links
 			if (host.includes('hitfile')) return 'HitFile';
@@ -219,6 +227,8 @@ export default {
 			if (url.includes('megadb')) return 'MegaDB';
 			if (url.includes('buzzheavier')) return 'BuzzHeavier';
 			if (url.includes('datanodes')) return 'DataNodes';
+			if (url.includes('datavaults')) return 'DataVaults';
+			if (url.includes('vikingfile')) return 'VikingFile';
 			if (url.includes('filecrypt')) return 'FileCrypt';
 			if (url.includes('hitfile')) return 'HitFile';
 			if (url.includes('ufile')) return 'UFile';
@@ -756,7 +766,7 @@ export default {
 		if (!site) {
 			return new Response(JSON.stringify({
 				success: false,
-				error: 'Missing site parameter (skidrow, freegog, gamedrive, steamrip)'
+				error: 'Missing site parameter (skidrow, freegog, gamedrive, steamrip, reloadedsteam)'
 			}), {
 				status: 400,
 				headers: {
@@ -771,7 +781,7 @@ export default {
 			if (!siteConfig) {
 				return new Response(JSON.stringify({
 					success: false,
-					error: `Invalid site parameter. Valid options: skidrow, freegog, gamedrive, steamrip`
+					error: `Invalid site parameter. Valid options: skidrow, freegog, gamedrive, steamrip, reloadedsteam`
 				}), {
 					status: 400,
 					headers: {
@@ -983,6 +993,11 @@ export default {
 				baseUrl: 'https://steamrip.com/wp-json/wp/v2/posts',
 				type: 'steamrip',
 				name: 'SteamRip'
+			},
+			{
+				baseUrl: 'https://reloadedsteam.com/wp-json/wp/v2/posts',
+				type: 'reloadedsteam',
+				name: 'ReloadedSteam'
 			}];
 
 		const sitePromises = sites.map(site => fetchRecentUploadsFromSite(site, workerUrl));
@@ -1046,6 +1061,9 @@ export default {
 				},
 				{
 					baseUrl: 'https://steamrip.com/wp-json/wp/v2/posts', type: 'steamrip', name: 'SteamRip'
+				},
+				{
+					baseUrl: 'https://reloadedsteam.com/wp-json/wp/v2/posts', type: 'reloadedsteam', name: 'ReloadedSteam'
 				}
 			);
 		} else if (siteParam === 'both') {
@@ -1073,6 +1091,10 @@ export default {
 		} else if (siteParam === 'steamrip') {
 			sites.push({
 				baseUrl: 'https://steamrip.com/wp-json/wp/v2/posts', type: 'steamrip', name: 'SteamRip'
+			});
+		} else if (siteParam === 'reloadedsteam') {
+			sites.push({
+				baseUrl: 'https://reloadedsteam.com/wp-json/wp/v2/posts', type: 'reloadedsteam', name: 'ReloadedSteam'
 			});
 		}
 
@@ -1315,6 +1337,7 @@ export default {
 			    (site.type === 'skidrow' && image.includes('skidrowreloaded.com'))) {
 				image = `${workerUrl}/proxy-image?url=${encodeURIComponent(image)}`;
 			}
+			// ReloadedSteam images don't need proxying (no Cloudflare protection)
 		}
 
 		return {
@@ -1570,6 +1593,8 @@ export default {
 			// Add SteamRip specific hosters
 			'buzzheavier.com': 'BuzzHeavier',
 			'datanodes.to': 'DataNodes',
+			'datavaults.co': 'DataVaults',
+			'vikingfile.com': 'VikingFile',
 			'filecrypt.co': 'FileCrypt',
 			'megadb.net': 'MegaDB',
 			// Additional requested hosters
@@ -1969,7 +1994,10 @@ export default {
 						'hitfile.net',
 						'ufile.io',
 						'clicknupload.site',
-						'1337x.to'
+						'1337x.to',
+						'datanodes.to',
+						'datavaults.co',
+						'vikingfile.com'
 					];
 					const hosterRegex = new RegExp(`<a[^>]+href=["'](https?://[^"']*(?:${approvedHosters.join('|')})[^"']*)["']`, 'gi');
 					while ((match = hosterRegex.exec(html)) !== null) {
@@ -2143,6 +2171,41 @@ export default {
 							});
 						}
 					}
+				} else if (siteType === 'reloadedsteam') {
+					// ReloadedSteam uses styled green buttons linking to datanodes.to / datavaults.co
+					const hrefRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>([^<]*)<\/a>/gi;
+					let m;
+					while ((m = hrefRegex.exec(html)) !== null) {
+						let url = m[1].trim();
+						const linkText = stripHtml(m[2]).trim();
+
+						// Normalize protocol-relative URLs
+						if (url.startsWith('//')) {
+							url = 'https:' + url;
+						}
+
+						// Skip if already in our list
+						if (downloadLinks.some(l => l.url === url)) continue;
+
+						// Check if this is a valid download URL
+						if (isValidDownloadUrl(url)) {
+							const service = extractServiceName(url);
+							downloadLinks.push({
+								type: 'hosting',
+								service: service,
+								url: url,
+								text: service
+							});
+						}
+
+						// Also check for torrent links
+						if (isValidTorrentUrl(url) && !downloadLinks.some(l => l.url === url)) {
+							const torrentData = classifyTorrentLink(url, linkText);
+							if (torrentData) {
+								downloadLinks.push(torrentData);
+							}
+						}
+					}
 				}
 
 				// Generic hosting/torrent patterns for all sites (fallback)
@@ -2169,7 +2232,10 @@ export default {
 					'onedrive.live.com',
 					'hitfile.net',
 					'ufile.io',
-					'clicknupload.site'
+					'clicknupload.site',
+					'datanodes.to',
+					'datavaults.co',
+					'vikingfile.com'
 				];
 				const hostingRegex = new RegExp(`<a[^>]+href=["'](https?://[^"']*(?:${hostingServices.join('|')})[^"']*?)["'][^>]*>`, 'gi');
 				let hm;
@@ -2223,7 +2289,7 @@ export default {
 			}
 
 			// Apply limits based on site type
-			const maxLinks = siteType === 'gamedrive' ? 20: (siteType === 'freegog' ? 20: 15);
+			const maxLinks = (siteType === 'gamedrive' || siteType === 'freegog' || siteType === 'reloadedsteam') ? 20 : 15;
 			return downloadLinks.slice(0, maxLinks);
 
 		} catch (err) {
