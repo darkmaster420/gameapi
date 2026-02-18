@@ -261,7 +261,7 @@ async function handlePostDetails(req, res) {
   if (!site) {
     return res.status(400).json({
       success: false,
-      error: 'Missing site parameter (skidrow, freegog, gamedrive, steamrip)'
+      error: `Missing site parameter (${Object.keys(SITE_CONFIGS).join(', ')})`
     });
   }
 

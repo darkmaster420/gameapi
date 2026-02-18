@@ -49,6 +49,16 @@ app.get('/version', (req, res) => {
   });
 });
 
+// Health check - must be before the catch-all route
+app.get('/health', (req, res) => {
+  res.json({
+    success: true,
+    version: VERSION,
+    status: 'healthy',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Route all requests through the Vercel handler
 app.use('/', async (req, res) => {
   // Mock Vercel-like req/res objects
@@ -65,16 +75,6 @@ app.use('/', async (req, res) => {
       });
     }
   }
-});
-
-// Health check
-app.get('/health', (req, res) => {
-  res.json({
-    success: true,
-    version: VERSION,
-    status: 'healthy',
-    timestamp: new Date().toISOString()
-  });
 });
 
 // Start server
