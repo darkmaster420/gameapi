@@ -430,52 +430,78 @@ export default {
 	// Function to make authenticated requests to SteamRip (both API and page content)
 	async function fetchSteamrip(url, isPageRequest = false) {
 		try {
-			// Get a valid cookie
-			const cookie = await getValidSteamripCookie();
-
-			const requestType = isPageRequest ? "page": "API";
-			console.log(`Making authenticated request to SteamRip ${requestType}`);
-
 			// Set appropriate user agent based on request type
 			const userAgent = isPageRequest
-			? 'Cloudflare-Workers-Link-Extractor/2.0': 'Cloudflare-Workers-Search-API/2.0';
+				? 'Cloudflare-Workers-Link-Extractor/2.0'
+				: 'Cloudflare-Workers-Search-API/2.0';
 
-			// Make the request with the cookie
-			const response = await fetch(url, {
+			// 1. Try direct fetch first (no cookie) — avoids FlareSolverr delay when CF is not active
+			let response = await fetch(url, {
 				headers: {
-					'User-Agent': userAgent,
-					'Cookie': `cf_clearance=${cookie.cf_clearance}`
+					'User-Agent': userAgent
 				}
 			});
 
-			// If the request fails with a 403 (Forbidden), the cookie might be expired
-			if (response.status === 403) {
-				console.log('Received 403, cookie might be expired, getting a fresh one');
+			// If direct fetch is successful, return it
+			if (response.ok) {
+				return response;
+			}
 
-				// Get a fresh cookie
-				const freshCookie = await getFreshSteamripCookie();
+			// Check for Cloudflare protection
+			const cloudflareStatus = [403, 503];
+			let isCloudflare = cloudflareStatus.includes(response.status);
 
-				// Retry the request with the fresh cookie
-				const retryResponse = await fetch(url, {
+			if (!isCloudflare && response.headers.get('content-type')?.includes('text/html')) {
+				const text = await response.text();
+				if (text.includes('cf-browser-verification') || text.includes('Cloudflare') || text.includes('Attention Required')) {
+					isCloudflare = true;
+				}
+			}
+
+			if (isCloudflare) {
+				console.log('Cloudflare protection detected on SteamRip, using FlareSolverr cookie');
+				const cookie = await getValidSteamripCookie();
+
+				response = await fetch(url, {
 					headers: {
 						'User-Agent': userAgent,
-						'Cookie': `cf_clearance=${freshCookie.cf_clearance}`
+						'Cookie': `cf_clearance=${cookie.cf_clearance}`
 					}
 				});
 
-				if (!retryResponse.ok) {
-					if (isPageRequest) {
-						console.warn(`Failed to fetch SteamRip page: ${retryResponse.status} ${retryResponse.statusText} (even with fresh cookie)`);
-						return null;
-					} else {
-						throw new Error(`SteamRip API returned ${retryResponse.status}: ${retryResponse.statusText} (even with fresh cookie)`);
+				if (response.status === 403) {
+					console.log('Received 403 from SteamRip, cookie might be expired, getting a fresh one');
+					const freshCookie = await getFreshSteamripCookie();
+
+					const retryResponse = await fetch(url, {
+						headers: {
+							'User-Agent': userAgent,
+							'Cookie': `cf_clearance=${freshCookie.cf_clearance}`
+						}
+					});
+
+					if (!retryResponse.ok) {
+						if (isPageRequest) {
+							console.warn(`Failed to fetch SteamRip page: ${retryResponse.status} ${retryResponse.statusText} (even with fresh cookie)`);
+							return null;
+						} else {
+							throw new Error(`SteamRip API returned ${retryResponse.status}: ${retryResponse.statusText} (even with fresh cookie)`);
+						}
 					}
+					return retryResponse;
 				}
 
-				return retryResponse;
-			}
-
-			if (!response.ok) {
+				if (!response.ok) {
+					if (isPageRequest) {
+						console.warn(`Failed to fetch SteamRip page: ${response.status} ${response.statusText}`);
+						return null;
+					} else {
+						throw new Error(`SteamRip API returned ${response.status}: ${response.statusText}`);
+					}
+				}
+				return response;
+			} else {
+				// Not Cloudflare, but still not ok
 				if (isPageRequest) {
 					console.warn(`Failed to fetch SteamRip page: ${response.status} ${response.statusText}`);
 					return null;
@@ -483,8 +509,6 @@ export default {
 					throw new Error(`SteamRip API returned ${response.status}: ${response.statusText}`);
 				}
 			}
-
-			return response;
 		} catch (error) {
 			console.error(`Error fetching SteamRip:`, error);
 			if (isPageRequest) {

@@ -162,11 +162,9 @@ async function searchSite(siteConfig, searchQuery) {
 }
 
 async function handleRecentUploads(req, res) {
-  // Exclude SteamRip from recent uploads due to frequent timeouts with FlareSolverr
-  // SteamRip still works for search and individual post fetches
-  const allSites = Object.values(SITE_CONFIGS).filter(site => site.type !== 'steamrip');
+  const allSites = Object.values(SITE_CONFIGS);
   
-  console.log(`Fetching recent uploads from ${allSites.length} sites (excluding SteamRip)`);
+  console.log(`Fetching recent uploads from ${allSites.length} sites`);
   
   const fetchPromises = allSites.map(site => fetchRecentFromSite(site));
   
