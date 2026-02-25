@@ -22,7 +22,7 @@ services:
   # GameAPI service
   gameapi:
     build: .
-    container_name: gamesearch-api
+    container_name: gameapi
     restart: unless-stopped
     ports:
       - "${PORT:-3000}:3000"
@@ -30,7 +30,7 @@ services:
       - NODE_ENV=${NODE_ENV:-production}
       - PORT=3000
       # FlareSolverr URL (internal Docker network)
-      - FLARESOLVERR_URL=${FLARESOLVERR_URL:-http://flaresolverr:8191/v1}
+      - FLARESOLVERR_URL=${FLARESOLVERR_URL:-http://gameapi-flaresolverr:8191/v1}
       - FLARE_TIMEOUT_MS=${FLARE_TIMEOUT_MS:-60000}
       - FLARE_RETRIES=${FLARE_RETRIES:-3}
     depends_on:
