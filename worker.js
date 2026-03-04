@@ -124,6 +124,7 @@ export default {
 		'freegog': 40,
 		'reloadedsteam': 40,
 		'steamunderground': 40,
+		'goggames': 50,
 		'default': 50
 	};
 
@@ -1035,6 +1036,11 @@ export default {
 				baseUrl: 'https://steamunderground.net/wp-json/wp/v2/posts',
 				type: 'steamunderground',
 				name: 'SteamUnderground'
+			},
+			{
+				baseUrl: 'https://gog-games.to/api/web/recent-torrents',
+				type: 'goggames',
+				name: 'GOG-Games'
 			}];
 
 		const sitePromises = sites.map(site => fetchRecentUploadsFromSite(site, workerUrl));
@@ -1104,6 +1110,9 @@ export default {
 				},
 				{
 					baseUrl: 'https://steamunderground.net/wp-json/wp/v2/posts', type: 'steamunderground', name: 'SteamUnderground'
+				},
+				{
+					baseUrl: 'https://gog-games.to/api/web/recent-torrents', type: 'goggames', name: 'GOG-Games'
 				}
 			);
 		} else if (siteParam === 'both') {
@@ -1139,6 +1148,10 @@ export default {
 		} else if (siteParam === 'steamunderground') {
 			sites.push({
 				baseUrl: 'https://steamunderground.net/wp-json/wp/v2/posts', type: 'steamunderground', name: 'SteamUnderground'
+			});
+		} else if (siteParam === 'goggames') {
+			sites.push({
+				baseUrl: 'https://gog-games.to/api/web/recent-torrents', type: 'goggames', name: 'GOG-Games'
 			});
 		}
 
@@ -1190,6 +1203,11 @@ export default {
 
 	async function fetchRecentUploadsFromSite(site, workerUrl) {
 		try {
+			// GOG-Games has its own API format – handle separately
+			if (site.type === 'goggames') {
+				return await fetchGogGamesRecentForWorker(site);
+			}
+
 			const params = new URLSearchParams( {
 				orderby: 'date',
 				order: 'desc'
@@ -1255,6 +1273,11 @@ export default {
 
 	async function fetchPostsWithSearch(site, searchQuery, workerUrl) {
 		try {
+			// GOG-Games doesn't have a search API – skip for search requests
+			if (site.type === 'goggames') {
+				return { site: site.name, posts: [], error: null };
+			}
+
 			const params = new URLSearchParams( {
 				search: searchQuery,
 				orderby: 'date',
@@ -1402,6 +1425,62 @@ export default {
 			downloadLinks,
 			source: site.name,
 			siteType: site.type,
+			image
+		};
+	}
+
+	// ─── GOG-Games.to helpers (worker-local) ────────────────────────────────
+	const GOG_GAMES_BASE = 'https://gog-games.to';
+	const GOG_GAMES_IMAGE_BASE = 'https://images.gog-statics.com';
+
+	async function fetchGogGamesRecentForWorker(site) {
+		try {
+			const response = await fetch(`${GOG_GAMES_BASE}/api/web/recent-torrents`, {
+				headers: { 'User-Agent': 'Cloudflare-Workers-Search-API/2.0', 'Accept': 'application/json' }
+			});
+			if (!response.ok) {
+				throw new Error(`GOG-Games API returned ${response.status}`);
+			}
+			const items = await response.json();
+			console.log(`Got ${items.length} items from GOG-Games`);
+			const posts = items.map(item => transformGogGamesPostForWorker(item));
+			return { site: site.name, posts, error: null };
+		} catch (error) {
+			console.error('Error fetching GOG-Games recent:', error);
+			return { site: site.name, posts: [], error: error.message };
+		}
+	}
+
+	function transformGogGamesPostForWorker(item) {
+		const torrentUrl = item.torrent_filename
+			? `${GOG_GAMES_BASE}/downloads/torrents/${item.torrent_filename}`
+			: null;
+		const image = item.image
+			? `${GOG_GAMES_IMAGE_BASE}/${item.image}.jpg`
+			: null;
+		const date = item.torrent_date || item.last_update || null;
+
+		const descParts = [];
+		if (item.developer) descParts.push(`Developer: ${item.developer}`);
+		if (item.publisher) descParts.push(`Publisher: ${item.publisher}`);
+		if (item.is_new) descParts.push('New release');
+		if (item.is_updated) descParts.push('Updated');
+		if (item.is_indev) descParts.push('In development');
+
+		return {
+			id: `goggames_${item.id}`,
+			originalId: item.id,
+			title: item.title || 'No title',
+			excerpt: descParts.join(' · ') || '',
+			link: `${GOG_GAMES_BASE}/game/${item.slug}`,
+			date,
+			slug: item.slug,
+			description: descParts.join(' · ') || '',
+			categories: [],
+			tags: [],
+			downloadLinks: torrentUrl ? [{ url: torrentUrl, label: 'Torrent', service: 'GOG-Games' }] : [],
+			source: 'GOG-Games',
+			siteType: 'goggames',
 			image
 		};
 	}

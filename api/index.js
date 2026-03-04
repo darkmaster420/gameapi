@@ -12,7 +12,9 @@ import {
   fetchSteamrip,
   fetchSkidrow,
   transformPostForV2,
-  isValidImageUrl
+  isValidImageUrl,
+  fetchGogGamesRecent,
+  transformGogGamesPost
 } from '../lib/helpers.js';
 
 // CORS headers
@@ -112,6 +114,11 @@ async function handleSearch(req, res) {
 
 async function searchSite(siteConfig, searchQuery) {
   try {
+    // GOG-Games doesn't have a search API – skip it for search requests
+    if (siteConfig.type === 'goggames') {
+      return [];
+    }
+
     const params = new URLSearchParams({
       search: searchQuery,
       orderby: 'date',
@@ -198,6 +205,12 @@ async function handleRecentUploads(req, res) {
 
 async function fetchRecentFromSite(siteConfig) {
   try {
+    // GOG-Games has its own API format – handle separately
+    if (siteConfig.type === 'goggames') {
+      const items = await fetchGogGamesRecent();
+      return items.map(item => transformGogGamesPost(item));
+    }
+
     const params = new URLSearchParams({
       orderby: 'date',
       order: 'desc'
