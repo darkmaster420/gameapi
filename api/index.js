@@ -14,7 +14,9 @@ import {
   transformPostForV2,
   isValidImageUrl,
   fetchGogGamesRecent,
-  transformGogGamesPost
+  transformGogGamesPost,
+  fetchOnlineFixRecent,
+  fetchOnlineFixSearch
 } from '../lib/helpers.js';
 
 // CORS headers
@@ -119,6 +121,11 @@ async function searchSite(siteConfig, searchQuery) {
       return [];
     }
 
+    // Online-Fix has an HTML search endpoint, scrape card results.
+    if (siteConfig.type === 'onlinefix') {
+      return await fetchOnlineFixSearch(searchQuery);
+    }
+
     const params = new URLSearchParams({
       search: searchQuery,
       orderby: 'date',
@@ -209,6 +216,11 @@ async function fetchRecentFromSite(siteConfig) {
     if (siteConfig.type === 'goggames') {
       const items = await fetchGogGamesRecent();
       return items.map(item => transformGogGamesPost(item));
+    }
+
+    // Online-Fix recent uploads are exposed via RSS.
+    if (siteConfig.type === 'onlinefix') {
+      return await fetchOnlineFixRecent();
     }
 
     const params = new URLSearchParams({

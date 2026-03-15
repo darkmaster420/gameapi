@@ -124,6 +124,7 @@ export default {
 		'freegog': 40,
 		'reloadedsteam': 40,
 		'steamunderground': 40,
+		'onlinefix': 40,
 		'goggames': 50,
 		'default': 50
 	};
@@ -176,6 +177,11 @@ export default {
 				baseUrl: 'https://steamunderground.net/wp-json/wp/v2/posts',
 				type: 'steamunderground',
 				name: 'SteamUnderground'
+			},
+			'onlinefix': {
+				baseUrl: 'https://online-fix.me',
+				type: 'onlinefix',
+				name: 'Online-Fix'
 			}
 		};
 		return siteConfigs[siteType] || null;
@@ -1038,6 +1044,11 @@ export default {
 				name: 'SteamUnderground'
 			},
 			{
+				baseUrl: 'https://online-fix.me',
+				type: 'onlinefix',
+				name: 'Online-Fix'
+			},
+			{
 				baseUrl: 'https://gog-games.to/api/web/recent-torrents',
 				type: 'goggames',
 				name: 'GOG-Games'
@@ -1112,6 +1123,9 @@ export default {
 					baseUrl: 'https://steamunderground.net/wp-json/wp/v2/posts', type: 'steamunderground', name: 'SteamUnderground'
 				},
 				{
+					baseUrl: 'https://online-fix.me', type: 'onlinefix', name: 'Online-Fix'
+				},
+				{
 					baseUrl: 'https://gog-games.to/api/web/recent-torrents', type: 'goggames', name: 'GOG-Games'
 				}
 			);
@@ -1148,6 +1162,10 @@ export default {
 		} else if (siteParam === 'steamunderground') {
 			sites.push({
 				baseUrl: 'https://steamunderground.net/wp-json/wp/v2/posts', type: 'steamunderground', name: 'SteamUnderground'
+			});
+		} else if (siteParam === 'onlinefix') {
+			sites.push({
+				baseUrl: 'https://online-fix.me', type: 'onlinefix', name: 'Online-Fix'
 			});
 		} else if (siteParam === 'goggames') {
 			sites.push({
@@ -1206,6 +1224,11 @@ export default {
 			// GOG-Games has its own API format – handle separately
 			if (site.type === 'goggames') {
 				return await fetchGogGamesRecentForWorker(site);
+			}
+
+			// Online-Fix recent uploads are exposed via RSS.
+			if (site.type === 'onlinefix') {
+				return await fetchOnlineFixRecentForWorker(site);
 			}
 
 			const params = new URLSearchParams( {
@@ -1276,6 +1299,11 @@ export default {
 			// GOG-Games doesn't have a search API – skip for search requests
 			if (site.type === 'goggames') {
 				return { site: site.name, posts: [], error: null };
+			}
+
+			// Online-Fix uses an HTML search endpoint.
+			if (site.type === 'onlinefix') {
+				return await fetchOnlineFixSearchForWorker(site, searchQuery);
 			}
 
 			const params = new URLSearchParams( {
@@ -1427,6 +1455,178 @@ export default {
 			siteType: site.type,
 			image
 		};
+	}
+
+	// ─── Online-Fix.me helpers (worker-local) ───────────────────────────────
+	const ONLINE_FIX_BASE = 'https://online-fix.me';
+
+	function decodeWindows1251Worker(buffer, contentType = '') {
+		const has1251 = /1251/i.test(contentType || '');
+		if (has1251) {
+			try {
+				return new TextDecoder('windows-1251').decode(buffer);
+			} catch {
+				// Fallback to UTF-8.
+			}
+		}
+		return new TextDecoder('utf-8').decode(buffer);
+	}
+
+	function decodeBasicHtmlEntitiesWorker(text = '') {
+		return text
+			.replace(/&amp;/g, '&')
+			.replace(/&quot;/g, '"')
+			.replace(/&#39;/g, "'")
+			.replace(/&#038;/g, '&')
+			.replace(/&lt;/g, '<')
+			.replace(/&gt;/g, '>')
+			.replace(/&nbsp;/g, ' ')
+			.replace(/\s+/g, ' ')
+			.trim();
+	}
+
+	function parseOnlineFixLinkWorker(link) {
+		const normalized = link.startsWith('http') ? link : `${ONLINE_FIX_BASE}${link}`;
+		const m = normalized.match(/\/(\d+)-([^/]+)\.html/i);
+		return {
+			link: normalized,
+			id: m ? m[1] : null,
+			slug: m ? m[2] : null
+		};
+	}
+
+	function extractSearchTermsWorker(query = '') {
+		return (query.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []).filter(term => term.length > 0);
+	}
+
+	function slugMatchesQueryWorker(slug = '', searchQuery = '') {
+		const terms = extractSearchTermsWorker(searchQuery);
+		if (terms.length === 0) return true;
+		const normalizedSlug = (slug || '').toLowerCase();
+		return terms.some(term => normalizedSlug.includes(term));
+	}
+
+	function buildOnlineFixPostForWorker({ id, title, link, date, image, description, excerpt }) {
+		const parsed = parseOnlineFixLinkWorker(link);
+		return {
+			id: `onlinefix_${id || parsed.id || parsed.slug || Date.now()}`,
+			originalId: id || parsed.id || '',
+			title: decodeBasicHtmlEntitiesWorker(title || 'No title'),
+			excerpt: decodeBasicHtmlEntitiesWorker(excerpt || description || ''),
+			link: parsed.link,
+			date: date || null,
+			slug: parsed.slug || '',
+			description: decodeBasicHtmlEntitiesWorker(description || excerpt || ''),
+			categories: [],
+			tags: [],
+			downloadLinks: [],
+			source: 'Online-Fix',
+			siteType: 'onlinefix',
+			image: image || null
+		};
+	}
+
+	async function fetchOnlineFixRecentForWorker(site) {
+		try {
+			const response = await fetch(`${ONLINE_FIX_BASE}/rss.xml`, {
+				headers: {
+					'User-Agent': 'Cloudflare-Workers-Search-API/2.0',
+					'Accept': 'application/xml,text/xml;q=0.9,*/*;q=0.8'
+				}
+			});
+
+			if (!response.ok) {
+				throw new Error(`Online-Fix RSS returned ${response.status}`);
+			}
+
+			const xml = decodeWindows1251Worker(await response.arrayBuffer(), response.headers.get('content-type'));
+			const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)];
+			const posts = items.map(match => {
+				const item = match[1] || '';
+				const title = (item.match(/<title>([\s\S]*?)<\/title>/i) || [])[1] || '';
+				const link = (item.match(/<link>([\s\S]*?)<\/link>/i) || [])[1] || '';
+				const pubDate = (item.match(/<pubDate>([\s\S]*?)<\/pubDate>/i) || [])[1] || '';
+				const descriptionRaw = (item.match(/<description>([\s\S]*?)<\/description>/i) || [])[1] || '';
+				const image = (descriptionRaw.match(/<img[^>]+src=["']([^"']+)["']/i) || [])[1] || null;
+				const description = stripHtml(descriptionRaw.replace(/<!\[CDATA\[|\]\]>/g, ''));
+				const parsed = parseOnlineFixLinkWorker(link);
+
+				return buildOnlineFixPostForWorker({
+					id: parsed.id,
+					title,
+					link,
+					date: pubDate ? new Date(pubDate).toISOString() : null,
+					image,
+					description,
+					excerpt: description
+				});
+			});
+
+			return { site: site.name, posts, error: null };
+		} catch (error) {
+			console.error('Error fetching Online-Fix recent:', error);
+			return { site: site.name, posts: [], error: error.message };
+		}
+	}
+
+	async function fetchOnlineFixSearchForWorker(site, searchQuery) {
+		try {
+			const url = `${ONLINE_FIX_BASE}/index.php?do=search&subaction=search&story=${encodeURIComponent(searchQuery)}`;
+			const response = await fetch(url, {
+				headers: {
+					'User-Agent': 'Cloudflare-Workers-Search-API/2.0',
+					'Accept': 'text/html,*/*;q=0.8'
+				}
+			});
+
+			if (!response.ok) {
+				throw new Error(`Online-Fix search returned ${response.status}`);
+			}
+
+			const html = decodeWindows1251Worker(await response.arrayBuffer(), response.headers.get('content-type'));
+			const cards = html.split(/<div class="news news-search">/i).slice(1);
+			const seen = new Set();
+			const posts = [];
+
+			for (const card of cards) {
+				const link =
+					(card.match(/<a class="img" href="(https?:\/\/online-fix\.me\/games\/[^"]+)"/i) || [])[1] ||
+					(card.match(/<a class="big-link" href="(https?:\/\/online-fix\.me\/games\/[^"]+)"/i) || [])[1] ||
+					'';
+				if (!link) continue;
+				if (seen.has(link)) continue;
+				seen.add(link);
+
+				const title = decodeBasicHtmlEntitiesWorker(((card.match(/<h2 class="title">\s*([\s\S]*?)\s*<\/h2>/i) || [])[1] || '').replace(/<[^>]*>/g, ''));
+				const datetime = (card.match(/<time[^>]+datetime="([^"]+)"/i) || [])[1] || null;
+				const image =
+					(card.match(/<img[^>]+data-src="([^"]+)"/i) || [])[1] ||
+					(card.match(/<img[^>]+src="([^"]+)"/i) || [])[1] ||
+					null;
+				const previewRaw = (card.match(/<div class="preview-text">([\s\S]*?)<\/div>/i) || [])[1] || '';
+				const preview = stripHtml(previewRaw);
+				const parsed = parseOnlineFixLinkWorker(link);
+
+				if (!slugMatchesQueryWorker(parsed.slug || '', searchQuery)) {
+					continue;
+				}
+
+				posts.push(buildOnlineFixPostForWorker({
+					id: parsed.id,
+					title: title || parsed.slug || 'No title',
+					link,
+					date: datetime,
+					image,
+					description: preview,
+					excerpt: preview
+				}));
+			}
+
+			return { site: site.name, posts, error: null };
+		} catch (error) {
+			console.error('Error searching Online-Fix:', error);
+			return { site: site.name, posts: [], error: error.message };
+		}
 	}
 
 	// ─── GOG-Games.to helpers (worker-local) ────────────────────────────────
