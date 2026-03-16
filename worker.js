@@ -140,6 +140,35 @@ export default {
 		expires_at: 0
 	};
 
+	const SKIDROW_COOLDOWN_MS = Math.max(30000, parseInt(env.SKIDROW_COOLDOWN_MS || '300000', 10) || 300000);
+	let skidrowCircuit = {
+		cooldownUntil: 0,
+		failures: 0,
+		lastError: null,
+	};
+
+	function isSkidrowCircuitOpen() {
+		return Date.now() < skidrowCircuit.cooldownUntil;
+	}
+
+	function noteSkidrowFailure(error) {
+		skidrowCircuit.failures += 1;
+		skidrowCircuit.lastError = String(error?.message || error || 'unknown error');
+		skidrowCircuit.cooldownUntil = Date.now() + SKIDROW_COOLDOWN_MS;
+		console.warn(`Skidrow circuit opened for ${Math.round(SKIDROW_COOLDOWN_MS / 1000)}s after failure #${skidrowCircuit.failures}: ${skidrowCircuit.lastError}`);
+	}
+
+	function resetSkidrowCircuit() {
+		if (skidrowCircuit.failures > 0 || skidrowCircuit.cooldownUntil > 0) {
+			console.log('Skidrow circuit reset after successful response');
+		}
+		skidrowCircuit = {
+			cooldownUntil: 0,
+			failures: 0,
+			lastError: null,
+		};
+	}
+
 	// Helper functions for common tasks
 	function stripHtml(html) {
 		return (html || '').replace(/<[^>]*>?/gm, '');
@@ -609,6 +638,17 @@ export default {
 
 	// Function to make authenticated requests to SkidrowReloaded (both API and page content)
 	async function fetchSkidrow(url, isPageRequest = false) {
+		if (isSkidrowCircuitOpen()) {
+			const remainingMs = skidrowCircuit.cooldownUntil - Date.now();
+			console.warn(`Skipping Skidrow request during cooldown (${Math.max(0, Math.ceil(remainingMs / 1000))}s remaining)`);
+			return isPageRequest ? null : new Response('[]', {
+				status: 200,
+				headers: {
+					'Content-Type': 'application/json'
+				}
+			});
+		}
+
 		try {
 			// Set appropriate user agent based on request type
 			const userAgent = isPageRequest
@@ -624,6 +664,7 @@ export default {
 
 			// If direct fetch is successful, return it
 			if (response.ok) {
+				resetSkidrowCircuit();
 				return response;
 			}
 
@@ -693,6 +734,7 @@ export default {
 			}
 		} catch (error) {
 			console.error(`Error fetching SkidrowReloaded:`, error);
+			noteSkidrowFailure(error);
 			if (isPageRequest) {
 				return null;
 			} else {
