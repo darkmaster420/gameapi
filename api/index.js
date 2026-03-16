@@ -104,8 +104,16 @@ async function handleSearch(req, res) {
   // Search all sites
   const allSites = Object.values(SITE_CONFIGS);
   const searchPromises = allSites.map(site => searchSite(site, searchQuery));
-  const allResults = await Promise.all(searchPromises);
-  const combinedResults = allResults.flat();
+  const settledResults = await Promise.allSettled(searchPromises);
+  const combinedResults = settledResults
+    .filter(result => result.status === 'fulfilled')
+    .flatMap(result => result.value);
+
+  settledResults.forEach((result, index) => {
+    if (result.status === 'rejected') {
+      console.error(`Search failed for ${allSites[index]?.name || 'unknown site'}:`, result.reason);
+    }
+  });
 
   return res.status(200).json({
     success: true,

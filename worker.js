@@ -537,8 +537,8 @@ export default {
 				throw new Error('FLARESOLVERR_URL environment variable is required for SkidrowReloaded. Please set it in wrangler.toml or via wrangler secret');
 			}
 			
-			const attempts = parseInt(env.FLARE_RETRIES || DEFAULT_FLARE_RETRIES, 10) || DEFAULT_FLARE_RETRIES;
-			const timeoutMs = parseInt(env.FLARE_TIMEOUT_MS || DEFAULT_FLARE_TIMEOUT_MS, 10) || DEFAULT_FLARE_TIMEOUT_MS;
+			const attempts = Math.max(1, parseInt(env.FLARE_RETRIES || '1', 10) || 1);
+			const timeoutMs = Math.min(25000, parseInt(env.FLARE_TIMEOUT_MS || DEFAULT_FLARE_TIMEOUT_MS, 10) || DEFAULT_FLARE_TIMEOUT_MS);
 			const response = await retryableFetch(flaresolverrUrl, {
 				method: 'POST',
 				headers: {
@@ -547,9 +547,10 @@ export default {
 				body: JSON.stringify({
 					cmd: 'request.get',
 					url: 'https://www.skidrowreloaded.com/wp-json/wp/v2/posts',
-					userAgent: 'Cloudflare-Workers-Search-API/2.0'
+					session: 'skidrowreloaded',
+					maxTimeout: timeoutMs
 				})
-			});
+			}, attempts, timeoutMs);
 
 			if (!response.ok) {
 				throw new Error(`FlareSolverr request failed: ${response.status}`);
@@ -695,7 +696,13 @@ export default {
 			if (isPageRequest) {
 				return null;
 			} else {
-				throw error;
+				// Fail open for site-level fetch errors so other providers still return data.
+				return new Response('[]', {
+					status: 200,
+					headers: {
+						'Content-Type': 'application/json'
+					}
+				});
 			}
 		}
 	}
