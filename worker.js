@@ -1508,6 +1508,7 @@ export default {
 
 	// ─── Online-Fix.me helpers (worker-local) ───────────────────────────────
 	const ONLINE_FIX_BASE = 'https://online-fix.me';
+	const steamHeaderImageCacheWorker = new Map();
 
 	function decodeWindows1251Worker(buffer, contentType = '') {
 		const has1251 = /1251/i.test(contentType || '');
@@ -1555,7 +1556,95 @@ export default {
 		return terms.some(term => normalizedSlug.includes(term));
 	}
 
-	function buildOnlineFixPostForWorker({ id, title, link, date, image, description, excerpt }) {
+	function normalizeOnlineFixTitleForSteamWorker(title = '') {
+		return String(title)
+			.replace(/<!\[CDATA\[|\]\]>/g, '')
+			.replace(/\[[^\]]*\]/g, ' ')
+			.replace(/\([^\)]*\)/g, ' ')
+			.replace(/\b(online[-\s]?fix|ofme|build\s*\d+|v?\d+(?:\.\d+){0,4}|update|hotfix|repack)\b/gi, ' ')
+			.replace(/[^\p{L}\p{N}\s]/gu, ' ')
+			.replace(/\s+/g, ' ')
+			.trim();
+	}
+
+	function chooseBestSteamSearchResultWorker(results, query) {
+		if (!Array.isArray(results) || results.length === 0) return null;
+		const normalizedQuery = query.toLowerCase().trim();
+
+		let best = null;
+		let bestScore = -1;
+
+		for (const result of results.slice(0, 8)) {
+			const name = String(result?.name || '').toLowerCase();
+			if (!name) continue;
+
+			let score = 0;
+			if (name === normalizedQuery) score += 100;
+			if (name.includes(normalizedQuery)) score += 40;
+			if (normalizedQuery.includes(name)) score += 20;
+
+			const queryTerms = normalizedQuery.split(/\s+/).filter(Boolean);
+			const matchedTerms = queryTerms.filter(term => name.includes(term)).length;
+			score += matchedTerms * 5;
+
+			if (score > bestScore) {
+				bestScore = score;
+				best = result;
+			}
+		}
+
+		return best;
+	}
+
+	async function resolveSteamHeaderImageForOnlineFixWorker(title = '') {
+		const normalized = normalizeOnlineFixTitleForSteamWorker(title);
+		if (!normalized) return null;
+
+		if (steamHeaderImageCacheWorker.has(normalized)) {
+			return steamHeaderImageCacheWorker.get(normalized);
+		}
+
+		try {
+			const response = await fetch(`https://steamcommunity.com/actions/SearchApps/${encodeURIComponent(normalized)}`, {
+				headers: { 'User-Agent': 'Cloudflare-Workers-Search-API/2.0', 'Accept': 'application/json' }
+			});
+
+			if (!response.ok) {
+				steamHeaderImageCacheWorker.set(normalized, null);
+				return null;
+			}
+
+			const data = await response.json();
+			const best = chooseBestSteamSearchResultWorker(data, normalized);
+			const appid = best?.appid ? String(best.appid) : '';
+			const image = appid ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg` : null;
+			steamHeaderImageCacheWorker.set(normalized, image);
+			return image;
+		} catch {
+			steamHeaderImageCacheWorker.set(normalized, null);
+			return null;
+		}
+	}
+
+	function extractOnlineFixOfmeLinkWorker(rawHtml = '') {
+		const decoded = rawHtml.replace(/<!\[CDATA\[|\]\]>/g, '');
+		const hrefs = [...decoded.matchAll(/<a[^>]+href=["']([^"']+)["']/gi)].map(m => m[1]);
+
+		for (const href of hrefs) {
+			const normalized = decodeBasicHtmlEntitiesWorker(href || '').trim();
+			if (!normalized) continue;
+
+			if (/ofme/i.test(normalized) || /\/engine\/go\.php\?url=/i.test(normalized)) {
+				if (normalized.startsWith('http')) return normalized;
+				if (normalized.startsWith('/')) return `${ONLINE_FIX_BASE}${normalized}`;
+				return `${ONLINE_FIX_BASE}/${normalized}`;
+			}
+		}
+
+		return null;
+	}
+
+	function buildOnlineFixPostForWorker({ id, title, link, date, image, description, excerpt, ofmeLink, downloadLinks }) {
 		const parsed = parseOnlineFixLinkWorker(link);
 		return {
 			id: `onlinefix_${id || parsed.id || parsed.slug || Date.now()}`,
@@ -1568,10 +1657,11 @@ export default {
 			description: decodeBasicHtmlEntitiesWorker(description || excerpt || ''),
 			categories: [],
 			tags: [],
-			downloadLinks: [],
+			downloadLinks: downloadLinks || (ofmeLink ? [{ type: 'hosting', service: 'OFME', url: ofmeLink, text: 'OFME' }] : []),
 			source: 'Online-Fix',
 			siteType: 'onlinefix',
-			image: image || null
+			image: image || null,
+			ofmeLink: ofmeLink || null
 		};
 	}
 
@@ -1597,6 +1687,7 @@ export default {
 				const pubDate = (item.match(/<pubDate>([\s\S]*?)<\/pubDate>/i) || [])[1] || '';
 				const descriptionRaw = (item.match(/<description>([\s\S]*?)<\/description>/i) || [])[1] || '';
 				const image = (descriptionRaw.match(/<img[^>]+src=["']([^"']+)["']/i) || [])[1] || null;
+				const ofmeLink = extractOnlineFixOfmeLinkWorker(descriptionRaw);
 				const description = stripHtml(descriptionRaw.replace(/<!\[CDATA\[|\]\]>/g, ''));
 				const parsed = parseOnlineFixLinkWorker(link);
 
@@ -1607,9 +1698,16 @@ export default {
 					date: pubDate ? new Date(pubDate).toISOString() : null,
 					image,
 					description,
-					excerpt: description
+					excerpt: description,
+					ofmeLink
 				});
 			});
+
+			await Promise.all(posts.map(async post => {
+				if (!post.image) {
+					post.image = await resolveSteamHeaderImageForOnlineFixWorker(post.title);
+				}
+			}));
 
 			return { site: site.name, posts, error: null };
 		} catch (error) {
@@ -1654,6 +1752,7 @@ export default {
 					null;
 				const previewRaw = (card.match(/<div class="preview-text">([\s\S]*?)<\/div>/i) || [])[1] || '';
 				const preview = stripHtml(previewRaw);
+				const ofmeLink = extractOnlineFixOfmeLinkWorker(card);
 				const parsed = parseOnlineFixLinkWorker(link);
 
 				if (!slugMatchesQueryWorker(parsed.slug || '', searchQuery)) {
@@ -1667,9 +1766,16 @@ export default {
 					date: datetime,
 					image,
 					description: preview,
-					excerpt: preview
+					excerpt: preview,
+					ofmeLink
 				}));
 			}
+
+			await Promise.all(posts.map(async post => {
+				if (!post.image) {
+					post.image = await resolveSteamHeaderImageForOnlineFixWorker(post.title);
+				}
+			}));
 
 			return { site: site.name, posts, error: null };
 		} catch (error) {
@@ -2324,7 +2430,34 @@ export default {
 				html = await response.text();
 
 				// Handle each site type specifically
-				if (siteType === 'gamedrive') {
+				if (siteType === 'onlinefix') {
+					const hrefRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>([^<]*)<\/a>/gi;
+					let match;
+
+					while ((match = hrefRegex.exec(html)) !== null) {
+						let url = decodeBasicHtmlEntitiesWorker(match[1] || '').trim();
+						if (!url) continue;
+
+						if (url.startsWith('//')) {
+							url = `https:${url}`;
+						} else if (url.startsWith('/')) {
+							url = `${ONLINE_FIX_BASE}${url}`;
+						}
+
+						if (downloadLinks.some(l => l.url === url)) continue;
+
+						const isOfmeLink = /ofme/i.test(url) || /\/engine\/go\.php\?url=/i.test(url);
+						if (isOfmeLink || isValidDownloadUrl(url)) {
+							const service = isOfmeLink ? 'OFME' : extractServiceName(url);
+							downloadLinks.push({
+								type: 'hosting',
+								service,
+								url,
+								text: service
+							});
+						}
+					}
+				} else if (siteType === 'gamedrive') {
 					// Prioritize "Manual Grab" for GameDrive if extras are present
 					const extrasRegex = /\b(soundtrack|mp3)\b/i;
 					if (extrasRegex.test(html)) {
