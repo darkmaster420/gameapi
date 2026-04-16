@@ -19,6 +19,10 @@ import {
   fetchOnlineFixSearch
 } from '../lib/helpers.js';
 
+// Search result cache: key = `${siteType}:${query}`, value = { results, timestamp }
+const searchCache = new Map();
+const SEARCH_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
 // CORS headers
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -93,6 +97,25 @@ async function handleSearch(req, res) {
     }
 
     const results = await searchSite(siteConfig, searchQuery);
+    
+    const cacheKey = `${siteParam}:${searchQuery.toLowerCase()}`;
+    if (results.length > 0) {
+      searchCache.set(cacheKey, { results, timestamp: Date.now() });
+    } else {
+      // Retry once, then fallback to cache
+      console.warn(`Single-site search for ${siteParam} returned empty, retrying`);
+      const retryResults = await searchSite(siteConfig, searchQuery);
+      if (retryResults.length > 0) {
+        searchCache.set(cacheKey, { results: retryResults, timestamp: Date.now() });
+        return res.status(200).json({ success: true, results: retryResults, count: retryResults.length, site: siteParam });
+      }
+      const cached = searchCache.get(cacheKey);
+      if (cached && (Date.now() - cached.timestamp) < SEARCH_CACHE_TTL) {
+        console.log(`Using cached results for ${siteParam}`);
+        return res.status(200).json({ success: true, results: cached.results, count: cached.results.length, site: siteParam, cached: true });
+      }
+    }
+
     return res.status(200).json({
       success: true,
       results,
@@ -105,15 +128,51 @@ async function handleSearch(req, res) {
   const allSites = Object.values(SITE_CONFIGS);
   const searchPromises = allSites.map(site => searchSite(site, searchQuery));
   const settledResults = await Promise.allSettled(searchPromises);
-  const combinedResults = settledResults
-    .filter(result => result.status === 'fulfilled')
-    .flatMap(result => result.value);
+
+  // Collect results per site, caching successes and retrying failures
+  let combinedResults = [];
+  const failedSites = [];
 
   settledResults.forEach((result, index) => {
-    if (result.status === 'rejected') {
-      console.error(`Search failed for ${allSites[index]?.name || 'unknown site'}:`, result.reason);
+    const site = allSites[index];
+    const cacheKey = `${site.type}:${searchQuery.toLowerCase()}`;
+
+    if (result.status === 'fulfilled' && result.value.length > 0) {
+      // Cache successful results
+      searchCache.set(cacheKey, { results: result.value, timestamp: Date.now() });
+      combinedResults.push(...result.value);
+    } else {
+      // Site returned empty or failed — mark for retry
+      const reason = result.status === 'rejected' ? result.reason : 'empty results';
+      console.warn(`Search returned nothing for ${site.name}: ${reason}`);
+      failedSites.push({ site, cacheKey });
     }
   });
+
+  // Retry failed/empty sites once
+  if (failedSites.length > 0) {
+    const retryPromises = failedSites.map(({ site }) => searchSite(site, searchQuery));
+    const retryResults = await Promise.allSettled(retryPromises);
+
+    retryResults.forEach((result, index) => {
+      const { site, cacheKey } = failedSites[index];
+
+      if (result.status === 'fulfilled' && result.value.length > 0) {
+        console.log(`Retry succeeded for ${site.name}: ${result.value.length} results`);
+        searchCache.set(cacheKey, { results: result.value, timestamp: Date.now() });
+        combinedResults.push(...result.value);
+      } else {
+        // Retry also failed — fall back to cache if available
+        const cached = searchCache.get(cacheKey);
+        if (cached && (Date.now() - cached.timestamp) < SEARCH_CACHE_TTL) {
+          console.log(`Using cached results for ${site.name} (${cached.results.length} results, age ${Math.round((Date.now() - cached.timestamp) / 1000)}s)`);
+          combinedResults.push(...cached.results);
+        } else {
+          console.warn(`No cached results available for ${site.name}`);
+        }
+      }
+    });
+  }
 
   return res.status(200).json({
     success: true,
